@@ -1,0 +1,10 @@
+{
+  "description": "Eule provides the Brazilian Ministério Público with a professional intelligence dashboard for efficient company risk analysis and reporting, enhancing decision-making.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
