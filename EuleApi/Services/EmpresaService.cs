@@ -25,6 +25,7 @@ public class EmpresaService(
     IMemoryCache cache,
     IOptions<CacheOptions> cacheOptions,
     IOptions<ScoreOptions> scoreOptions,
+    IOptions<FontesOptions> fontesOptions,
     ILogger<EmpresaService> logger,
     TimeProvider clock) : IEmpresaService
 {
@@ -84,6 +85,7 @@ public class EmpresaService(
         var total = Math.Min(100, resultados.Sum(i => i.ScoreObtido));
         var o = scoreOptions.Value;
         var s = ctx.Sancoes;
+        var alerta = ClassificarAlerta(total, resultados, o);
 
         return new EmpresaResponse
         {
@@ -125,8 +127,9 @@ public class EmpresaService(
             ScoreTotal = total,
             ScoreParcial = resultados.Any(i => i.RevisaoManual),
             NivelRisco = ClassificarNivel(total, o),
-            TipoAlertaGeral = ClassificarAlerta(total, resultados, o),
+            TipoAlertaGeral = alerta,
             ConsultadoEm = agora,
+            Parecer = GeradorParecer.Gerar(ctx, resultados, alerta, agora, fontesOptions.Value),
         };
     }
 

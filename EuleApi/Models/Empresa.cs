@@ -49,7 +49,67 @@ public class EmpresaResponse
     /// <summary>FUNDAMENTO_PIC, SUSPEITA_QUALIFICADA, RISCO_ELEVADO ou RISCO_MODERADO (ver <see cref="TiposAlerta"/>).</summary>
     public required string TipoAlertaGeral { get; init; }
     public DateTime ConsultadoEm { get; init; }
-    public string VersaoAlgoritmo { get; init; } = "1.1.0";
+    public string VersaoAlgoritmo { get; init; } = "1.2.0";
+
+    /// <summary>Embasamento para instauração de procedimento: fundamentação, enquadramento, diligências e proveniência.</summary>
+    public required ParecerResponse Parecer { get; init; }
+}
+
+/// <summary>Embasamento do relatório, gerado a partir dos achados (ver <see cref="Services.GeradorParecer"/>).</summary>
+public class ParecerResponse
+{
+    /// <summary>Parágrafos de fundamentação em texto corrido, prontos para uso em portaria ou despacho.</summary>
+    public required List<string> Fundamentacao { get; init; }
+    public required List<EnquadramentoTipico> Enquadramentos { get; init; }
+    public required List<DiligenciaSugerida> Diligencias { get; init; }
+    public required List<FonteConsultadaResponse> Fontes { get; init; }
+
+    /// <summary>Limitações da análise (fontes indisponíveis, revisões pendentes, ressalvas de competência).</summary>
+    public required List<string> Ressalvas { get; init; }
+
+    /// <summary>SHA-256 dos achados (CNPJ, data/hora, indicadores e fontes), para conferir a integridade do relatório.</summary>
+    public required string HashIntegridade { get; init; }
+}
+
+public class EnquadramentoTipico
+{
+    /// <summary>Dispositivo legal, ex.: "Lei 7.492/86, art. 16".</summary>
+    public required string Dispositivo { get; init; }
+    public required string Conduta { get; init; }
+    /// <summary>Indicadores que sustentam a hipótese.</summary>
+    public required List<string> Indicadores { get; init; }
+    /// <summary>Elementos do tipo que os achados já sustentam.</summary>
+    public required List<string> ElementosSustentados { get; init; }
+    /// <summary>Elementos que ainda dependem de diligência.</summary>
+    public required List<string> ElementosAProvar { get; init; }
+    /// <summary>Justiça Estadual ou Federal.</summary>
+    public required string Competencia { get; init; }
+}
+
+public class DiligenciaSugerida
+{
+    /// <summary>1 (prioritária) a 3.</summary>
+    public int Prioridade { get; init; }
+    public required string Descricao { get; init; }
+    public required string Motivo { get; init; }
+    public string? BaseLegal { get; init; }
+    /// <summary>True quando depende de autorização judicial.</summary>
+    public bool ReservaJurisdicao { get; init; }
+}
+
+public class FonteConsultadaResponse
+{
+    public required string Nome { get; init; }
+    /// <summary>CONSULTADA, INDISPONIVEL ou NAO_CONSULTAVEL.</summary>
+    public required string Situacao { get; init; }
+    /// <summary>Endereço da consulta feita pelo sistema.</summary>
+    public string? UrlConsulta { get; init; }
+    /// <summary>Página pública em que o analista pode repetir a consulta manualmente.</summary>
+    public string? UrlVerificacao { get; init; }
+    public DateTime ConsultadoEm { get; init; }
+    /// <summary>Data-base ou período de referência do dado, quando a fonte informa.</summary>
+    public string? Referencia { get; init; }
+    public required List<string> Indicadores { get; init; }
 }
 
 public class SocioResponse

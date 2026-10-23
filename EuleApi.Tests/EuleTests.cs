@@ -174,6 +174,7 @@ public class EmpresaServiceTests
             new FakeDataJud(dataJud ?? (() => null)),
             indicadores,
             new MemoryCache(new MemoryCacheOptions()), Microsoft.Extensions.Options.Options.Create(new CacheOptions()), score,
+            Microsoft.Extensions.Options.Options.Create(new FontesOptions()),
             NullLogger<EmpresaService>.Instance, new FixedClock(new DateTimeOffset(2026, 9, 30, 12, 0, 0, TimeSpan.Zero)));
         return (svc, receita);
     }
@@ -296,6 +297,76 @@ public class ClassificacaoTests
             Ind(TiposIndicador.IndicioJuridico, indicio ? 25 : 0),
         ];
         Assert.Equal(esperado, EmpresaService.ClassificarAlerta(score, resultados, O));
+    }
+}
+
+public class GeradorParecerTests
+{
+    private static readonly IOptions<ScoreOptions> Opts = Microsoft.Extensions.Options.Options.Create(new ScoreOptions());
+    private static readonly DateTime Agora = new(2026, 9, 30, 12, 0, 0, DateTimeKind.Utc);
+
+    private static ParecerResponse Gerar(string cnae = "7319003", bool autorizado = false, ResultadoSancoes? sancoes = null, ResultadoDataJud? dataJud = null)
+    {
+        var ctx = new ContextoAvaliacao(
+            new EmpresaReceita("66503941000156", "CAITEC LTDA", null, new(2026, 4, 28), 100_000m, "ME", null, "Ativa", cnae, "Marketing direto", [],
+                null, null, null, null, "Salvador", "BA", [new SocioReceita("LORRANE", "Sócio-Administrador", null, null, null, "***293137**")]),
+            new AutorizacaoBacen(autorizado, autorizado ? "Autorizada" : null, null, null, "2026-09-30"),
+            new ResultadoRanking(false, null, "2º trimestre de 2026", 190),
+            new(2026, 9, 30), sancoes, new ResultadoPgfn(false, 0m), dataJud);
+        IIndicador[] indicadores =
+        [
+            new ConstituicaoRecenteCapitalIncompativel(Opts), new AusenciaAutorizacaoBacen(), new InconsistenciaCnae(),
+            new CruzamentoSocietario(), new AusenciaRanking(Opts), new InconsistenciaGeografica(),
+            new SancaoCeisCnep(), new DividaAtivaPgfn(), new SocioProcessoCriminal(),
+        ];
+        var resultados = indicadores.Select(i => i.Avaliar(ctx)).ToList();
+        var total = Math.Min(100, resultados.Sum(r => r.ScoreObtido));
+        var alerta = EmpresaService.ClassificarAlerta(total, resultados, Opts.Value);
+        return GeradorParecer.Gerar(ctx, resultados, alerta, Agora, new FontesOptions());
+    }
+
+    [Fact]
+    public void Sem_autorizacao_bacen_enquadra_art16_e_aponta_competencia_federal()
+    {
+        var p = Gerar();
+        var art16 = Assert.Single(p.Enquadramentos, e => e.Dispositivo == "Lei 7.492/86, art. 16");
+        Assert.Contains("02", art16.Indicadores);
+        Assert.Contains("Federal", art16.Competencia);
+        Assert.Contains(p.Enquadramentos, e => e.Dispositivo.StartsWith("Código Penal, art. 171"));
+        Assert.Contains(p.Ressalvas, r => r.Contains("Ministério Público Federal"));
+        Assert.Contains(p.Diligencias, d => d.Descricao.Contains("COAF"));
+        Assert.Contains(p.Diligencias, d => d.ReservaJurisdicao);
+    }
+
+    [Fact]
+    public void Empresa_autorizada_com_cnae_compativel_nao_gera_hipotese()
+    {
+        var p = Gerar(cnae: "6619399", autorizado: true);
+        // Constituição recente ainda pontua (01), então o art. 171 continua como hipótese; o art. 16 não.
+        Assert.DoesNotContain(p.Enquadramentos, e => e.Dispositivo.StartsWith("Lei 7.492"));
+        Assert.DoesNotContain(p.Diligencias, d => d.Descricao.Contains("COAF"));
+    }
+
+    [Fact]
+    public void Indicio_juridico_entra_nos_elementos_e_na_conclusao()
+    {
+        var p = Gerar(sancoes: new ResultadoSancoes(true, false, "CEIS: inidoneidade"));
+        Assert.All(p.Enquadramentos, e => Assert.Contains("07", e.Indicadores));
+        Assert.Contains(p.Fundamentacao, f => f.Contains("CEIS: inidoneidade"));
+        Assert.Contains(p.Fundamentacao, f => f.Contains("Resolução CNMP nº 181/2017"));
+        Assert.Contains(p.Diligencias, d => d.Descricao.Contains("órgão sancionador"));
+    }
+
+    [Fact]
+    public void Fontes_indisponiveis_viram_ressalva_e_hash_e_deterministico()
+    {
+        var p = Gerar();
+        Assert.Equal("INDISPONIVEL", p.Fontes.Single(f => f.Indicadores.Contains("07")).Situacao);
+        Assert.Equal("NAO_CONSULTAVEL", p.Fontes.Single(f => f.Indicadores.Contains("09")).Situacao);
+        Assert.Contains(p.Ressalvas, r => r.Contains("indicador 07"));
+        Assert.Equal(64, p.HashIntegridade.Length);
+        Assert.Equal(p.HashIntegridade, Gerar().HashIntegridade);
+        Assert.NotEqual(p.HashIntegridade, Gerar(sancoes: new ResultadoSancoes(true, false, null)).HashIntegridade);
     }
 }
 

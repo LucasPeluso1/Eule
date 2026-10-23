@@ -33,6 +33,45 @@ export interface FontesComplementares {
   numeroProcessos: number | null;
 }
 
+export interface Enquadramento {
+  dispositivo: string;
+  conduta: string;
+  indicadores: string[];
+  elementosSustentados: string[];
+  elementosAProvar: string[];
+  competencia: string;
+}
+
+export interface Diligencia {
+  prioridade: number;
+  descricao: string;
+  motivo: string;
+  baseLegal: string | null;
+  reservaJurisdicao: boolean;
+}
+
+export type SituacaoFonte = "CONSULTADA" | "INDISPONIVEL" | "NAO_CONSULTAVEL";
+
+export interface FonteConsultada {
+  nome: string;
+  situacao: SituacaoFonte;
+  urlConsulta: string | null;
+  urlVerificacao: string | null;
+  consultadoEm: string;
+  referencia: string | null;
+  indicadores: string[];
+}
+
+/** Embasamento gerado pela API a partir dos achados. */
+export interface Parecer {
+  fundamentacao: string[];
+  enquadramentos: Enquadramento[];
+  diligencias: Diligencia[];
+  fontes: FonteConsultada[];
+  ressalvas: string[];
+  hashIntegridade: string;
+}
+
 export interface CompanyData {
   cnpj: string;
   razaoSocial: string;
@@ -53,6 +92,8 @@ export interface CompanyData {
   scoreTotal: number;
   classificacao: Risk;
   tipoAlertaGeral: TipoAlerta;
+  /** Ausente nos dados de exemplo, que não passam pela API. */
+  parecer?: Parecer;
 }
 
 const semFontesComplementares: FontesComplementares = {
