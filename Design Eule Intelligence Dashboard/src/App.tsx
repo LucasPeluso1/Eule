@@ -1,11 +1,11 @@
-import { FormEvent, ReactNode, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import { fetchEmpresa } from "./api";
 import { CompanyData, Indicador, RecentSearch, Risk, TipoAlerta, TipoIndicador } from "./fixtures";
+import TileField from "./TileField";
 
-gsap.registerPlugin(useGSAP, ScrollTrigger);
+gsap.registerPlugin(useGSAP);
 
 type Screen = "search" | "analysis" | "report";
 
@@ -16,8 +16,23 @@ const riskNotes: Record<Risk, string> = {
   BAIXO: "Risco baixo. Nenhuma providência adicional recomendada neste momento.",
 };
 
-/** Circunferência do arco do gauge (r = 96). */
-const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 96;
+/** Faixas padrão de classificação da API (EuleOptions): BAIXO < 40 ≤ MÉDIO < 70 ≤ ALTO < 90 ≤ CRÍTICO. */
+const riskBands: { risk: Risk; from: number; to: number }[] = [
+  { risk: "BAIXO", from: 0, to: 40 },
+  { risk: "MÉDIO", from: 40, to: 70 },
+  { risk: "ALTO", from: 70, to: 90 },
+  { risk: "CRÍTICO", from: 90, to: 100 },
+];
+
+/** Bases cruzadas a cada consulta, na ordem em que aparecem no relatório. */
+const sources = [
+  ["Receita Federal", "Cadastro CNPJ e quadro societário"],
+  ["Banco Central", "Instituições autorizadas"],
+  ["Banco Central", "Ranking de reclamações"],
+  ["CGU", "Sanções CEIS e CNEP"],
+  ["PGFN", "Dívida ativa da União"],
+  ["CNJ", "Processos no DataJud"],
+];
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -72,9 +87,9 @@ function JustaCausaBanner({ company }: { company: CompanyData }) {
           <path d="M12 10v4.5M12 17.5v.01" />
         </Icon>
       </div>
-      <div>
-        <span className="alert-kicker">{copy.kicker}</span>
+      <div className="alert-copy">
         <h2>{copy.title}</h2>
+        <p className="alert-kicker"><i aria-hidden="true" />{copy.kicker}</p>
         <p>{copy.text}</p>
         {indicios.length > 0 && (
           <ul className="alert-indicios">
@@ -86,7 +101,7 @@ function JustaCausaBanner({ company }: { company: CompanyData }) {
       </div>
       <div className="alert-score">
         <strong>{company.scoreTotal}</strong>
-        <span>score de risco</span>
+        <span>de 100</span>
       </div>
     </section>
   );
@@ -167,18 +182,43 @@ function Header({
   screen: Screen;
   setScreen: (screen: Screen) => void;
 }) {
+  const nav = useRef<HTMLElement>(null);
+  const marker = useRef<HTMLSpanElement>(null);
+  const placed = useRef(false);
+
+  useGSAP(() => {
+    const ativo = nav.current?.querySelector<HTMLElement>(".tab.active");
+    if (!ativo || !marker.current) return;
+    const destino = { x: ativo.offsetLeft, width: ativo.offsetWidth };
+    if (!placed.current || prefersReducedMotion()) gsap.set(marker.current, destino);
+    else gsap.to(marker.current, { ...destino, duration: 0.42, ease: "expo.out" });
+    placed.current = true;
+  }, { dependencies: [screen], scope: nav });
+
+  useEffect(() => {
+    const reposicionar = () => {
+      const ativo = nav.current?.querySelector<HTMLElement>(".tab.active");
+      if (ativo && marker.current) gsap.set(marker.current, { x: ativo.offsetLeft, width: ativo.offsetWidth });
+    };
+    window.addEventListener("resize", reposicionar);
+    document.fonts?.ready.then(reposicionar);
+    return () => window.removeEventListener("resize", reposicionar);
+  }, []);
+
   return (
     <header className="app-header">
       <button className="brand" onClick={() => setScreen("search")} type="button">
         <OwlLogo />
         <span className="brand-copy">
-          <strong>EULE</strong>
-          <small>NUCCIBER · MPBA</small>
+          <strong>Eule</strong>
+          <small>NUCCIBER · Ministério Público da Bahia</small>
         </span>
       </button>
-      <nav className="tabs" aria-label="Navegação principal">
+      <nav className="tabs" aria-label="Navegação principal" ref={nav}>
+        <span className="tab-marker" ref={marker} aria-hidden="true" />
         <button
           className={screen === "search" ? "tab active" : "tab"}
+          aria-current={screen === "search" ? "page" : undefined}
           onClick={() => setScreen("search")}
           type="button"
         >
@@ -190,6 +230,7 @@ function Header({
         </button>
         <button
           className={screen === "analysis" ? "tab active" : "tab"}
+          aria-current={screen === "analysis" ? "page" : undefined}
           onClick={() => setScreen("analysis")}
           type="button"
         >
@@ -200,6 +241,7 @@ function Header({
         </button>
         <button
           className={screen === "report" ? "tab active" : "tab"}
+          aria-current={screen === "report" ? "page" : undefined}
           onClick={() => setScreen("report")}
           type="button"
         >
@@ -212,7 +254,7 @@ function Header({
       </nav>
       <div className="user-area">
         <span className="environment"><i /> Ambiente seguro</span>
-        <div className="avatar">MP</div>
+        <div className="avatar" title="Usuário MP">MP</div>
       </div>
     </header>
   );
@@ -231,8 +273,8 @@ function EmptyState({ onSearch }: { onSearch: () => void }) {
   return (
     <main className="screen">
       <section className="panel empty-state">
-        <span className="eyebrow">Nenhuma empresa consultada</span>
-        <p>Realize uma consulta por CNPJ para visualizar esta tela.</p>
+        <h1>Nenhuma empresa consultada</h1>
+        <p>A análise e o relatório aparecem aqui depois que você consultar um CNPJ.</p>
         <button className="primary-button" onClick={onSearch} type="button">
           Ir para consulta
         </button>
@@ -323,47 +365,52 @@ function SearchScreen({
 }) {
   const consulta = useConsulta(onLoad);
   const { isLoading, consultar } = consulta;
-  const root = useRef<HTMLElement>(null);
 
-  useGSAP(() => {
-    if (prefersReducedMotion()) return;
-    gsap.from(".reveal", { autoAlpha: 0, y: 16, duration: 0.5, ease: "power2.out", stagger: 0.08 });
-  }, { scope: root });
+  const alertas = recentSearches.filter((item) => item.company.classificacao === "ALTO" || item.company.classificacao === "CRÍTICO").length;
 
   return (
-    <main className="screen search-screen" ref={root}>
-      <section className="zone zone-search">
-        <span className="eyebrow reveal">Inteligência pré-investigativa</span>
-        <h1 className="reveal">Consulta de pessoa jurídica</h1>
-        <p className="lede reveal">
-          Cruza dados públicos da Receita Federal e do Banco Central para identificar intermediadoras de pagamento
-          suspeitas e apontar justa causa para PIC ou IP.
-        </p>
-        <div className="reveal search-holder">
+    <main className="screen search-screen">
+      <section className="panel intake" aria-labelledby="intake-title">
+        <div className="intake-main">
+          <h1 id="intake-title">Consulta de pessoa jurídica</h1>
+          <p className="lede">
+            Cruza dados públicos da Receita Federal e do Banco Central para identificar intermediadoras de pagamento
+            suspeitas e apontar justa causa para PIC ou IP.
+          </p>
           <SearchField consulta={consulta} />
         </div>
-        <dl className="session-stats reveal" aria-label="Estatísticas da sessão">
-          <div>
-            <dt>Consultas nesta sessão</dt>
-            <dd>{recentSearches.length}</dd>
-          </div>
-          <div className="alert-stat">
-            <dt>Alertas de risco alto ou crítico</dt>
-            <dd>{recentSearches.filter((item) => item.company.classificacao === "ALTO" || item.company.classificacao === "CRÍTICO").length}</dd>
-          </div>
-          <div>
-            <dt>Última consulta</dt>
-            <dd>{recentSearches[0]?.date ?? "Nenhuma ainda"}</dd>
-          </div>
-        </dl>
+        <div className="intake-sources">
+          <h2>Bases cruzadas em cada consulta</h2>
+          <ol className="source-list">
+            {sources.map(([orgao, base]) => (
+              <li key={base}>
+                <span className="source-glyph" aria-hidden="true" />
+                <span><strong>{orgao}</strong>{base}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
       </section>
 
-      <section className="panel recent-panel reveal">
+      <dl className="session-line" aria-label="Estatísticas da sessão">
+        <div>
+          <dt>Consultas nesta sessão</dt>
+          <dd>{recentSearches.length}</dd>
+        </div>
+        <div className={alertas > 0 ? "alert-stat" : undefined}>
+          <dt>Alertas de risco alto ou crítico</dt>
+          <dd>{alertas}</dd>
+        </div>
+        <div>
+          <dt>Última consulta</dt>
+          <dd>{recentSearches[0]?.date ?? "Nenhuma ainda"}</dd>
+        </div>
+      </dl>
+
+      <section className="panel recent-panel">
         <div className="section-heading">
-          <div>
-            <span className="eyebrow">Histórico</span>
-            <h2>Consultas recentes</h2>
-          </div>
+          <h2>Consultas recentes</h2>
+          <span>{recentSearches.length === 0 ? "Sem registros" : `${recentSearches.length} de até 5`}</span>
         </div>
         <div className="table-scroll">
           <table>
@@ -379,12 +426,12 @@ function SearchScreen({
             <tbody>
               {recentSearches.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="empty-row">Nenhuma consulta realizada nesta sessão.</td>
+                  <td colSpan={5} className="empty-row">As consultas desta sessão ficam listadas aqui para você reabrir a análise.</td>
                 </tr>
               )}
               {recentSearches.map(({ company, date }) => (
                 <tr key={company.cnpj}>
-                  <td className="mono">{company.cnpj}</td>
+                  <td className="num">{company.cnpj}</td>
                   <td className="company-name">{company.razaoSocial}</td>
                   <td>{date}</td>
                   <td><RiskBadge risk={company.classificacao} /></td>
@@ -403,16 +450,16 @@ function SearchScreen({
   );
 }
 
-function ScoreGauge({ score, risk }: { score: number; risk: Risk }) {
+function ScoreScale({ score, risk }: { score: number; risk: Risk }) {
   const root = useRef<HTMLDivElement>(null);
-  const arc = useRef<SVGCircleElement>(null);
+  const marker = useRef<HTMLSpanElement>(null);
   const value = useRef<HTMLElement>(null);
 
   useGSAP(() => {
     const estado = { v: 0 };
     const desenhar = () => {
-      const preenchido = Math.min(Math.max(estado.v, 0), 100) / 100;
-      arc.current?.style.setProperty("stroke-dashoffset", String(GAUGE_CIRCUMFERENCE * (1 - preenchido)));
+      const v = Math.min(Math.max(estado.v, 0), 100);
+      marker.current?.style.setProperty("left", `${v}%`);
       if (value.current) value.current.textContent = String(Math.round(estado.v));
     };
 
@@ -422,26 +469,33 @@ function ScoreGauge({ score, risk }: { score: number; risk: Risk }) {
       return;
     }
     desenhar();
-    gsap.to(estado, { v: score, duration: 0.8, ease: "power2.out", onUpdate: desenhar });
+    gsap.to(estado, { v: score, duration: 1.1, ease: "expo.out", delay: 0.15, onUpdate: desenhar });
   }, { scope: root, dependencies: [score] });
 
   return (
-    <div className="gauge" ref={root}>
-      <svg viewBox="0 0 240 240" role="img" aria-label={`Score de risco ${score} de 100`}>
-        <circle className="gauge-track" cx="120" cy="120" r="96" />
-        <circle className="gauge-ticks" cx="120" cy="120" r="110" />
-        <circle
-          ref={arc}
-          className={`gauge-value ${riskClass(risk)}`}
-          cx="120"
-          cy="120"
-          r="96"
-          style={{ strokeDasharray: GAUGE_CIRCUMFERENCE, strokeDashoffset: GAUGE_CIRCUMFERENCE }}
-        />
-      </svg>
-      <div className="gauge-copy" aria-hidden="true">
-        <strong ref={value}>0</strong>
+    <div className={`score-block ${riskClass(risk)}`} ref={root} id="score-anchor">
+      <div className="score-figure">
+        <strong ref={value} aria-hidden="true">0</strong>
         <span>de 100</span>
+      </div>
+      <div className="scale" role="img" aria-label={`Score de risco ${score} de 100, faixa ${risk.toLowerCase()}`}>
+        <div className="scale-track">
+          {riskBands.map((band) => (
+            <span
+              key={band.risk}
+              className={`scale-band ${riskClass(band.risk)}${band.risk === risk ? " current" : ""}`}
+              style={{ flexGrow: band.to - band.from }}
+            />
+          ))}
+          <span className="scale-marker" ref={marker} />
+        </div>
+        <div className="scale-labels" aria-hidden="true">
+          {riskBands.map((band) => (
+            <span key={band.risk} style={{ flexGrow: band.to - band.from }} className={band.risk === risk ? "current" : undefined}>
+              <b>{band.from}</b>{band.risk.toLowerCase()}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -471,26 +525,25 @@ const levelLabels: Record<ReturnType<typeof indicatorLevel>, string> = {
   na: "Não avaliado",
 };
 
-function IndicatorCard({ indicador }: { indicador: Indicador }) {
+function IndicatorRow({ indicador }: { indicador: Indicador }) {
   const level = indicatorLevel(indicador);
+  const proporcao = indicador.peso > 0 ? indicador.score / indicador.peso : 0;
 
   return (
-    <li className={`indicator-card ${level}`}>
-      <span className="status-bar" aria-hidden="true" />
-      <div className="indicator-body">
-        <div className="indicator-head">
-          <span className="indicator-code">{indicador.id}</span>
-          <h3>{indicador.label}</h3>
-          <span className="indicator-score">
-            <strong>{indicador.score}</strong>
-            <small>/ {indicador.peso}</small>
-          </span>
-        </div>
+    <li className={`indicator-row ${level}`}>
+      <span className="indicator-code">{indicador.id}</span>
+      <div className="indicator-main">
+        <h3>{indicador.label}</h3>
         <p className="indicator-description"><ObservadoCell texto={indicador.observado} /></p>
-        <div className="indicator-foot">
-          <TipoTag tipo={indicador.tipo} />
-          <span className={`level-label ${level}`}>{levelLabels[level]}</span>
-        </div>
+        <TipoTag tipo={indicador.tipo} />
+      </div>
+      <div className="indicator-measure">
+        <span className="indicator-score">
+          <strong>{indicador.score}</strong>
+          <small>de {indicador.peso}</small>
+        </span>
+        <span className="meter" aria-hidden="true"><i style={{ width: `${proporcao * 100}%` }} /></span>
+        <span className={`level-label ${level}`}>{levelLabels[level]}</span>
       </div>
     </li>
   );
@@ -537,60 +590,57 @@ function AnalysisScreen({
 
   useGSAP(() => {
     if (prefersReducedMotion()) return;
-    const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
-    tl.from(".zone-score", { autoAlpha: 0, y: 12, duration: 0.45 })
-      .from(".zone-report", { height: 0, autoAlpha: 0, duration: 0.6, clearProps: "height" }, "-=0.15")
-      .from(".zone-report .alert-banner", { autoAlpha: 0, scale: 0.94, duration: 0.55, ease: "power3.out" }, "-=0.25")
-      .from(".indicator-card", { autoAlpha: 0, y: 14, duration: 0.4, stagger: 0.06 }, "-=0.3")
-      .from(".report-extra", { autoAlpha: 0, y: 10, duration: 0.4, stagger: 0.06 }, "-=0.2");
+    const tl = gsap.timeline({ defaults: { ease: "expo.out" } });
+    tl.from(".verdict", { autoAlpha: 0, y: 10, duration: 0.5 })
+      .from(".alert-banner", { autoAlpha: 0, clipPath: "inset(0 100% 0 0)", duration: 0.8, ease: "power4.inOut" }, 0.35)
+      .from(".meter i", { scaleX: 0, transformOrigin: "left center", duration: 0.9, stagger: 0.05 }, 0.45);
   }, { scope: root, dependencies: [company], revertOnUpdate: true });
 
   return (
     <main className="screen analysis-screen" ref={root}>
-      <section className="zone zone-search compact" aria-label="Nova consulta">
+      <section className="analysis-bar" aria-label="Nova consulta">
+        <p className="analysis-crumb">Dossiê <span className="num">{dossierNumber(company)}</span> · consultado em {formatTimestamp(consultedAt)}</p>
         <SearchField consulta={consulta} compact />
       </section>
 
-      <section className="zone zone-score" aria-labelledby="company-name">
+      <section className="panel verdict" aria-labelledby="company-name">
         <div className="company-line">
           <div className="company-emblem" aria-hidden="true">{companyInitials(company.razaoSocial)}</div>
           <div>
-            <span className="eyebrow">Dossiê {dossierNumber(company)}</span>
             <h1 id="company-name">{company.razaoSocial}</h1>
             <p className="company-sub">
-              <span className="mono">{company.cnpj}</span>
+              <span className="num">{company.cnpj}</span>
               <span className="status-dot">{company.situacaoCadastral}</span>
               <span>{company.municipio}/{company.uf}</span>
             </p>
+            <div className="verdict-note">
+              <RiskBadge risk={company.classificacao} large />
+              <p className="score-note">{riskNotes[company.classificacao]}</p>
+            </div>
           </div>
         </div>
-        <ScoreGauge score={company.scoreTotal} risk={company.classificacao} />
-        <RiskBadge risk={company.classificacao} large />
-        <p className="score-note">{riskNotes[company.classificacao]}</p>
+        <ScoreScale score={company.scoreTotal} risk={company.classificacao} />
       </section>
 
-      <section className="zone zone-report" aria-labelledby="report-heading">
+      <section className="zone-report" aria-labelledby="report-heading">
         <div className="report-inner">
           <JustaCausaBanner company={company} />
 
           <div className="report-heading">
-            <div>
-              <span className="eyebrow">Relatório de indicadores</span>
-              <h2 id="report-heading">{company.indicadores.length} sinais avaliados</h2>
-            </div>
+            <h2 id="report-heading">{company.indicadores.length} sinais avaliados</h2>
             <button className="secondary-button" onClick={onReport} type="button">
               <Icon><path d="M6 2h8l4 4v16H6zM14 2v5h5" /></Icon>
               Gerar relatório formal
             </button>
           </div>
 
-          <ul className="indicator-list">
+          <ul className="panel indicator-list">
             {company.indicadores.map((indicador) => (
-              <IndicatorCard indicador={indicador} key={indicador.id} />
+              <IndicatorRow indicador={indicador} key={indicador.id} />
             ))}
           </ul>
 
-          <div className="report-extra panel company-details">
+          <div className="panel company-details">
             <h3>Identificação cadastral</h3>
             <dl>
               {details.map(([term, value]) => (
@@ -612,7 +662,7 @@ function AnalysisScreen({
             </dl>
           </div>
 
-          <div className="report-extra source-bar">
+          <div className="source-bar">
             <Icon><path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10Z" /><path d="m9 12 2 2 4-5" /></Icon>
             <span><strong>Fontes consultadas:</strong> Receita Federal (cadastro de CNPJ), Cadastro de instituições autorizadas e Ranking de Reclamações do BACEN, CEIS/CNEP (CGU), lista de devedores da PGFN e DataJud (CNJ).</span>
             <span className="source-time">Consultado em {formatTimestamp(consultedAt)}</span>
@@ -637,23 +687,14 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
 
   useGSAP(() => {
     if (prefersReducedMotion()) return;
-    gsap.from(".report-document", { autoAlpha: 0, y: 20, duration: 0.5, ease: "power2.out" });
-    gsap.utils.toArray<HTMLElement>(".scroll-reveal").forEach((el) => {
-      gsap.from(el, {
-        autoAlpha: 0,
-        y: 24,
-        duration: 0.5,
-        ease: "power2.out",
-        scrollTrigger: { trigger: el, start: "top 88%", once: true },
-      });
-    });
+    gsap.from(".report-document", { autoAlpha: 0, y: 28, duration: 0.7, ease: "expo.out" });
   }, { scope: root });
 
   return (
     <main className="screen report-screen" ref={root}>
       <div className="report-toolbar">
         <div>
-          <span className="eyebrow">Relatório de inteligência</span>
+          <h1 className="toolbar-title">Relatório de inteligência</h1>
           <span className="toolbar-state"><i /> Documento concluído</span>
         </div>
         <div className="toolbar-actions">
@@ -672,7 +713,7 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
         <header className="report-header">
           <div className="report-brand">
             <OwlLogo />
-            <div><strong>EULE</strong><span>Ministério Público da Bahia · NUCCIBER</span></div>
+            <div><strong>Eule</strong><span>Ministério Público da Bahia · NUCCIBER</span></div>
           </div>
           <dl className="report-meta">
             <dt>Gerado em</dt><dd>{formatTimestamp(consultedAt)}</dd>
@@ -682,9 +723,9 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
 
         <div className="classification">Uso restrito · Informação de inteligência</div>
         <div className="report-title">
-          <span>Relatório de análise pré-investigativa</span>
-          <h1>{company.razaoSocial}</h1>
-          <p>CNPJ {company.cnpj} · {company.municipio}/{company.uf} · Abertura em {company.dataAbertura}</p>
+          <h2>{company.razaoSocial}</h2>
+          <p className="report-kind">Relatório de análise pré-investigativa</p>
+          <p className="report-id">CNPJ <span className="num">{company.cnpj}</span> · {company.municipio}/{company.uf} · Abertura em {company.dataAbertura}</p>
         </div>
 
         <div className="report-alert">
@@ -693,8 +734,8 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
 
         <section className={`executive-summary ${riskClass(company.classificacao)}`}>
           <div>
-            <span className="report-label">01 · Sumário executivo</span>
-            <h2>Classificação de risco {company.classificacao.toLowerCase()}</h2>
+            <h3><span>1</span>Sumário executivo</h3>
+            <p className="summary-lead">Classificação de risco {company.classificacao.toLowerCase()}.</p>
             <p>
               Empresa de porte {company.porte.toLowerCase()}, capital social de {company.capitalSocial}, com CNAE {company.cnae} ({company.cnaeDescricao}).
             </p>
@@ -712,8 +753,8 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           <div className="summary-score"><strong>{company.scoreTotal}</strong><span>Risco {company.classificacao}</span></div>
         </section>
 
-        <section className="report-section scroll-reveal">
-          <span className="report-label">02 · Matriz de indicadores</span>
+        <section className="report-section">
+          <h3><span>2</span>Matriz de indicadores</h3>
           <div className="table-scroll">
             <table className="report-table">
               <thead><tr><th>Indicador analisado</th><th>Tipo</th><th>Peso máx.</th><th>Score</th><th>Valor observado</th></tr></thead>
@@ -732,20 +773,20 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           </div>
         </section>
 
-        <div className="report-columns scroll-reveal">
+        <div className="report-columns">
           <section className="report-section legal-section">
-            <span className="report-label">03 · Fundamentação jurídica</span>
-            <h2>STF · Tema 1404 (RE 1.537.165)</h2>
+            <h3><span>3</span>Fundamentação jurídica</h3>
+            <p className="legal-ref">STF · Tema 1404 (RE 1.537.165)</p>
             <p>A presente análise observa a tese de repercussão geral fixada pelo Supremo Tribunal Federal no Tema 1404 (RE 1.537.165), respeitando os limites de acesso, tratamento e compartilhamento de dados por órgãos de persecução.</p>
             <p>Considera-se ainda a Resolução Conjunta nº 16/2025 do BCB/CMN, que proíbe a utilização de contas-bolsão, com prazo até 31/12/2026.</p>
             <blockquote>O uso de informações deve preservar a finalidade pública, a rastreabilidade da consulta e a proporcionalidade da medida investigativa.</blockquote>
           </section>
 
           <section className="report-section recommendations">
-            <span className="report-label">04 · Recomendações</span>
+            <h3><span>4</span>Recomendações</h3>
             <ol>
               {recommendations.map((item, index) => (
-                <li key={item}><span>{String(index + 1).padStart(2, "0")}</span>{item}</li>
+                <li key={item}><span>{index + 1}</span>{item}</li>
               ))}
             </ol>
           </section>
@@ -778,6 +819,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <TileField pulse={screen === "analysis" && company ? { key: consultedAt.getTime(), risk: company.classificacao } : null} />
       <Header screen={screen} setScreen={setScreen} />
       {screen === "search" && <SearchScreen onLoad={loadCompany} recentSearches={recentSearches} />}
       {screen === "analysis" &&
