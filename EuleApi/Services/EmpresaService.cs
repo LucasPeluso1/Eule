@@ -18,6 +18,9 @@ public class EmpresaService(
     IReceitaClient receita,
     IBacenAutorizacaoClient bacen,
     IRankingReclamacoesClient ranking,
+    ICguSancoesClient cgu,
+    IPgfnClient pgfn,
+    IDataJudClient dataJud,
     IEnumerable<IIndicador> indicadores,
     IMemoryCache cache,
     IOptions<CacheOptions> cacheOptions,
@@ -49,7 +52,8 @@ public class EmpresaService(
             logger.LogInformation("Consulta cnpj={Cnpj} cache=MISS", cnpj14);
             var resposta = await MontarAsync(cnpj14, ct);
 
-            // Só chegamos aqui se nenhuma fonte falhou: erros nunca entram no cache.
+            // Só chegamos aqui se nenhuma fonte essencial falhou: erros nunca entram no cache.
+            // As fontes complementares (07–09) entram no cache mesmo quando null.
             cache.Set(key, resposta, TimeSpan.FromHours(cacheOptions.Value.TtlHoras));
             return resposta;
         }
@@ -66,14 +70,20 @@ public class EmpresaService(
 
         var autorizacaoTask = bacen.ConsultarAsync(cnpj14, ct);
         var rankingTask = ranking.ConsultarAsync(cnpj14, empresa.RazaoSocial, ct);
-        await Task.WhenAll(autorizacaoTask, rankingTask);
+        var sancoesTask = Opcional("CGU CEIS/CNEP", () => cgu.ConsultarAsync(cnpj14, ct), ct);
+        var pgfnTask = Opcional("PGFN", () => pgfn.ConsultarAsync(cnpj14, ct), ct);
+        var dataJudTask = Opcional("DataJud", () => dataJud.ConsultarAsync(empresa.Socios, ct), ct);
+        await Task.WhenAll(autorizacaoTask, rankingTask, sancoesTask, pgfnTask, dataJudTask);
 
         var agora = clock.GetUtcNow().UtcDateTime;
-        var ctx = new ContextoAvaliacao(empresa, autorizacaoTask.Result, rankingTask.Result, DateOnly.FromDateTime(agora));
+        var ctx = new ContextoAvaliacao(empresa, autorizacaoTask.Result, rankingTask.Result, DateOnly.FromDateTime(agora),
+            sancoesTask.Result, pgfnTask.Result, dataJudTask.Result);
 
         var resultados = indicadores.Select(i => i.Avaliar(ctx)).OrderBy(i => i.Codigo, StringComparer.Ordinal).ToList();
-        var total = resultados.Sum(i => i.ScoreObtido);
+        // Com os indicadores 07–09 a soma dos pesos passa de 100; o score é limitado à escala 0–100.
+        var total = Math.Min(100, resultados.Sum(i => i.ScoreObtido));
         var o = scoreOptions.Value;
+        var s = ctx.Sancoes;
 
         return new EmpresaResponse
         {
@@ -103,12 +113,46 @@ public class EmpresaService(
             ConstaNoRanking = ctx.Ranking.Encontrado,
             PosicaoRankingReclamacoes = ctx.Ranking.Entrada?.Posicao,
             RankingObservacao = ObservacaoRanking(ctx.Ranking),
+            SancaoAtivaCeis = s?.Ceis,
+            SancaoAtivaCnep = s?.Cnep,
+            DescricaoSancao = s?.Descricao,
+            PossuiDividaAtivaPgfn = ctx.Pgfn?.PossuiDivida,
+            ValorDividaPgfn = ctx.Pgfn?.Valor,
+            SocioComProcessoCriminal = ctx.DataJud?.SocioComProcessoCriminal,
+            NomeSocioProcessado = ctx.DataJud?.NomeSocio,
+            NumeroProcessosEncontrados = ctx.DataJud?.NumeroProcessos,
             Indicadores = resultados,
             ScoreTotal = total,
             ScoreParcial = resultados.Any(i => i.RevisaoManual),
-            NivelRisco = total >= o.LimiarAlto ? "ALTO" : total >= o.LimiarMedio ? "MEDIO" : "BAIXO",
+            NivelRisco = ClassificarNivel(total, o),
+            TipoAlertaGeral = ClassificarAlerta(total, resultados, o),
             ConsultadoEm = agora,
         };
+    }
+
+    public static string ClassificarNivel(int score, ScoreOptions o) =>
+        score >= o.LimiarCritico ? "CRITICO" : score >= o.LimiarAlto ? "ALTO" : score >= o.LimiarMedio ? "MEDIO" : "BAIXO";
+
+    public static string ClassificarAlerta(int score, IEnumerable<IndicadorResultado> resultados, ScoreOptions o)
+    {
+        var indicioJuridico = resultados.Any(i => i.Tipo == TiposIndicador.IndicioJuridico && i.ScoreObtido > 0);
+        if (score >= o.LimiarFundamentoPic && indicioJuridico) return TiposAlerta.FundamentoPic;
+        if (score >= o.LimiarSuspeitaQualificada && indicioJuridico) return TiposAlerta.SuspeitaQualificada;
+        return score >= o.LimiarRiscoElevado ? TiposAlerta.RiscoElevado : TiposAlerta.RiscoModerado;
+    }
+
+    /// <summary>Executa uma fonte complementar: qualquer exceção vira null, sem interromper a consulta.</summary>
+    private async Task<T?> Opcional<T>(string fonte, Func<Task<T?>> consulta, CancellationToken ct) where T : class
+    {
+        try
+        {
+            return await consulta();
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Fonte complementar {Fonte} indisponível; campo retornará null", fonte);
+            return null;
+        }
     }
 
     private static string ObservacaoRanking(ResultadoRanking r)

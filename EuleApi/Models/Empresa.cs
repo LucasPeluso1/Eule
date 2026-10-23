@@ -25,14 +25,31 @@ public class EmpresaResponse
     public int? PosicaoRankingReclamacoes { get; init; }
     public required string RankingObservacao { get; init; }
 
+    // Indicador 07 · CEIS/CNEP (CGU). Null quando a fonte não respondeu.
+    public bool? SancaoAtivaCeis { get; init; }
+    public bool? SancaoAtivaCnep { get; init; }
+    public string? DescricaoSancao { get; init; }
+
+    // Indicador 08 · Dívida ativa da União (PGFN). Null quando a fonte não respondeu.
+    public bool? PossuiDividaAtivaPgfn { get; init; }
+    public decimal? ValorDividaPgfn { get; init; }
+
+    // Indicador 09 · Processo criminal de sócio (DataJud/CNJ). Null quando não há CPF consultável ou a fonte falhou.
+    public bool? SocioComProcessoCriminal { get; init; }
+    public string? NomeSocioProcessado { get; init; }
+    public int? NumeroProcessosEncontrados { get; init; }
+
     public required List<IndicadorResultado> Indicadores { get; init; }
     public int ScoreTotal { get; init; }
 
     /// <summary>True enquanto houver indicadores de revisão manual (04 e 06) ainda não preenchidos.</summary>
     public bool ScoreParcial { get; init; }
     public required string NivelRisco { get; init; }
+
+    /// <summary>FUNDAMENTO_PIC, SUSPEITA_QUALIFICADA, RISCO_ELEVADO ou RISCO_MODERADO (ver <see cref="TiposAlerta"/>).</summary>
+    public required string TipoAlertaGeral { get; init; }
     public DateTime ConsultadoEm { get; init; }
-    public string VersaoAlgoritmo { get; init; } = "1.0.0";
+    public string VersaoAlgoritmo { get; init; } = "1.1.0";
 }
 
 public class SocioResponse
@@ -56,6 +73,26 @@ public class IndicadorResultado
 
     /// <summary>True quando o valor depende de preenchimento/validação do analista.</summary>
     public bool RevisaoManual { get; init; }
+
+    /// <summary>INDICIO_JURIDICO ou FATOR_RISCO (ver <see cref="TiposIndicador"/>).</summary>
+    public string Tipo { get; init; } = TiposIndicador.FatorRisco;
+}
+
+public static class TiposIndicador
+{
+    /// <summary>Fato com relevância jurídica própria (sanção administrativa, processo criminal).</summary>
+    public const string IndicioJuridico = "INDICIO_JURIDICO";
+
+    /// <summary>Sinal de risco que, isoladamente, não constitui indício jurídico.</summary>
+    public const string FatorRisco = "FATOR_RISCO";
+}
+
+public static class TiposAlerta
+{
+    public const string FundamentoPic = "FUNDAMENTO_PIC";
+    public const string SuspeitaQualificada = "SUSPEITA_QUALIFICADA";
+    public const string RiscoElevado = "RISCO_ELEVADO";
+    public const string RiscoModerado = "RISCO_MODERADO";
 }
 
 // ---- Modelos internos (não expostos pela API) ----
@@ -94,8 +131,19 @@ public record EntradaRanking(string Nome, string? Cnpj8, decimal? Indice, int? P
 
 public record ResultadoRanking(bool Encontrado, EntradaRanking? Entrada, string Referencia, int TotalInstituicoes);
 
+/// <summary>CEIS/CNEP: cada lista é null quando a consulta a ela falhou.</summary>
+public record ResultadoSancoes(bool? Ceis, bool? Cnep, string? Descricao);
+
+public record ResultadoPgfn(bool PossuiDivida, decimal Valor);
+
+public record ResultadoDataJud(bool SocioComProcessoCriminal, string? NomeSocio, int NumeroProcessos, int SociosConsultados);
+
+/// <summary>As fontes complementares (07–09) são opcionais: null significa fonte indisponível ou não consultável.</summary>
 public record ContextoAvaliacao(
     EmpresaReceita Empresa,
     AutorizacaoBacen Autorizacao,
     ResultadoRanking Ranking,
-    DateOnly Hoje);
+    DateOnly Hoje,
+    ResultadoSancoes? Sancoes = null,
+    ResultadoPgfn? Pgfn = null,
+    ResultadoDataJud? DataJud = null);

@@ -1,20 +1,100 @@
-import { FormEvent, ReactNode, useState } from "react";
+import { FormEvent, ReactNode, useRef, useState } from "react";
+import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
 import { fetchEmpresa } from "./api";
-import { CompanyData, Indicador, RecentSearch, Risk } from "./fixtures";
+import { CompanyData, Indicador, RecentSearch, Risk, TipoAlerta, TipoIndicador } from "./fixtures";
+
+gsap.registerPlugin(useGSAP, ScrollTrigger);
 
 type Screen = "search" | "analysis" | "report";
 
 const riskNotes: Record<Risk, string> = {
+  CRÍTICO: "Risco crítico. Os sinais reunidos justificam prioridade na análise e avaliação imediata de medidas.",
   ALTO: "Risco elevado. Recomenda-se análise aprofundada antes do prosseguimento.",
   MÉDIO: "Risco moderado. Recomenda-se acompanhamento e verificação complementar.",
   BAIXO: "Risco baixo. Nenhuma providência adicional recomendada neste momento.",
 };
 
+/** Circunferência do arco do gauge (r = 96). */
+const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 96;
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 function indicatorLevel(indicador: Indicador) {
+  // A API marca com "NÃO AVALIADO" os indicadores cuja fonte complementar não respondeu.
+  if (indicador.score === 0 && indicador.observado.startsWith("NÃO AVALIADO")) return "na";
   const ratio = indicador.score / indicador.peso;
   if (ratio >= 0.66) return "high";
   if (ratio >= 0.33) return "medium";
   return "low";
+}
+
+function riskClass(risk: Risk) {
+  return risk.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+const tipoLabels: Record<TipoIndicador, string> = {
+  INDICIO_JURIDICO: "Indício jurídico",
+  FATOR_RISCO: "Fator de risco",
+};
+
+function TipoTag({ tipo }: { tipo: TipoIndicador }) {
+  return <span className={tipo === "INDICIO_JURIDICO" ? "tag juridico" : "tag risco"}>{tipoLabels[tipo]}</span>;
+}
+
+/** Alertas que exigem indício jurídico positivo e por isso ganham o banner de justa causa. */
+const alertCopy: Partial<Record<TipoAlerta, { kicker: string; title: string; text: string }>> = {
+  FUNDAMENTO_PIC: {
+    kicker: "Justa causa identificada",
+    title: "Fundamento para instauração de PIC",
+    text: "Score de risco a partir de 90 com indício jurídico positivo. Os elementos reunidos indicam justa causa para instauração de PIC ou requisição de IP, nos termos do Tema 1404 do STF.",
+  },
+  SUSPEITA_QUALIFICADA: {
+    kicker: "Suspeita qualificada",
+    title: "Indício jurídico com score elevado",
+    text: "Score de risco a partir de 80 com indício jurídico positivo. Recomenda-se diligência complementar para consolidar a justa causa antes da instauração de PIC.",
+  },
+};
+
+function JustaCausaBanner({ company }: { company: CompanyData }) {
+  const copy = alertCopy[company.tipoAlertaGeral];
+  if (!copy) return null;
+  const indicios = company.indicadores.filter((i) => i.tipo === "INDICIO_JURIDICO" && i.score > 0);
+  const qualificada = company.tipoAlertaGeral === "SUSPEITA_QUALIFICADA";
+
+  return (
+    <section className={qualificada ? "alert-banner qualificada" : "alert-banner"} role="alert" aria-live="assertive">
+      <div className="alert-icon" aria-hidden="true">
+        <Icon>
+          <path d="M12 3 2.5 20h19L12 3Z" />
+          <path d="M12 10v4.5M12 17.5v.01" />
+        </Icon>
+      </div>
+      <div>
+        <span className="alert-kicker">{copy.kicker}</span>
+        <h2>{copy.title}</h2>
+        <p>{copy.text}</p>
+        {indicios.length > 0 && (
+          <ul className="alert-indicios">
+            {indicios.map((i) => (
+              <li key={i.id}><TipoTag tipo={i.tipo} /> {i.id} · {i.label}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="alert-score">
+        <strong>{company.scoreTotal}</strong>
+        <span>score de risco</span>
+      </div>
+    </section>
+  );
+}
+
+function situacaoFonte(valor: boolean | null, positivo: string, negativo: string) {
+  if (valor === null) return "Não avaliado (fonte indisponível)";
+  return valor ? positivo : negativo;
 }
 
 function companyInitials(name: string) {
@@ -93,7 +173,7 @@ function Header({
         <OwlLogo />
         <span className="brand-copy">
           <strong>EULE</strong>
-          <small>Inteligência Institucional</small>
+          <small>NUCCIBER · MPBA</small>
         </span>
       </button>
       <nav className="tabs" aria-label="Navegação principal">
@@ -131,42 +211,29 @@ function Header({
         </button>
       </nav>
       <div className="user-area">
-        <span className="environment"><i /> AMBIENTE SEGURO</span>
+        <span className="environment"><i /> Ambiente seguro</span>
         <div className="avatar">MP</div>
       </div>
     </header>
   );
 }
 
-function PageTitle({
-  eyebrow,
-  title,
-  description,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-}) {
+function RiskBadge({ risk, large = false }: { risk: Risk; large?: boolean }) {
   return (
-    <div className="page-title">
-      <span className="eyebrow">{eyebrow}</span>
-      <h1>{title}</h1>
-      <p>{description}</p>
-    </div>
+    <span className={`risk-badge ${riskClass(risk)}${large ? " large" : ""}`}>
+      <i aria-hidden="true" />
+      Risco {risk}
+    </span>
   );
-}
-
-function RiskBadge({ risk }: { risk: Risk }) {
-  return <span className={`risk-badge ${risk.toLowerCase().replace("é", "e")}`}>{risk}</span>;
 }
 
 function EmptyState({ onSearch }: { onSearch: () => void }) {
   return (
     <main className="screen">
       <section className="panel empty-state">
-        <span className="eyebrow">NENHUMA EMPRESA CONSULTADA</span>
+        <span className="eyebrow">Nenhuma empresa consultada</span>
         <p>Realize uma consulta por CNPJ para visualizar esta tela.</p>
-        <button className="primary-button compact" onClick={onSearch} type="button">
+        <button className="primary-button" onClick={onSearch} type="button">
           Ir para consulta
         </button>
       </section>
@@ -174,21 +241,10 @@ function EmptyState({ onSearch }: { onSearch: () => void }) {
   );
 }
 
-function SearchScreen({
-  onLoad,
-  recentSearches,
-}: {
-  onLoad: (company: CompanyData) => void;
-  recentSearches: RecentSearch[];
-}) {
-  const [cnpj, setCnpj] = useState("");
+/** Estado da consulta por CNPJ, compartilhado pelos campos de busca das telas. */
+function useConsulta(onLoad: (company: CompanyData) => void) {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
-  function handleSearch(event: FormEvent) {
-    event.preventDefault();
-    return consultar(cnpj);
-  }
 
   async function consultar(alvo: string) {
     setError("");
@@ -202,82 +258,112 @@ function SearchScreen({
     }
   }
 
+  return { error, setError, isLoading, consultar };
+}
+
+function SearchField({
+  consulta,
+  compact = false,
+}: {
+  consulta: ReturnType<typeof useConsulta>;
+  compact?: boolean;
+}) {
+  const [cnpj, setCnpj] = useState("");
+  const { error, setError, isLoading, consultar } = consulta;
+  const inputId = compact ? "cnpj-compact" : "cnpj";
+
+  function handleSearch(event: FormEvent) {
+    event.preventDefault();
+    return consultar(cnpj);
+  }
+
   return (
-    <main className="screen search-screen">
-      <section className="search-hero">
-        <div className="search-primary">
-          <PageTitle
-            eyebrow="CONSULTA DE PESSOA JURÍDICA"
-            title="Análise cadastral e de risco"
-            description="Consulte dados integrados e indicadores de risco a partir do CNPJ."
+    <form className={compact ? "search-form compact" : "search-form"} onSubmit={handleSearch} role="search">
+      <label htmlFor={inputId} className={compact ? "visually-hidden" : undefined}>CNPJ da empresa</label>
+      <div className="search-row">
+        <div className="input-wrap">
+          <Icon>
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4 4" />
+          </Icon>
+          <input
+            id={inputId}
+            value={cnpj}
+            onChange={(event) => {
+              setCnpj(event.target.value);
+              setError("");
+            }}
+            placeholder="00.000.000/0000-00"
+            inputMode="numeric"
+            autoComplete="off"
+            aria-describedby={error ? `${inputId}-error` : `${inputId}-hint`}
+            aria-invalid={error ? true : undefined}
           />
-          <form className="search-form" onSubmit={handleSearch}>
-            <label htmlFor="cnpj">CNPJ</label>
-            <div className="search-row">
-              <div className="input-wrap">
-                <Icon>
-                  <path d="M4 21V5l8-3 8 3v16M8 9h1M8 13h1M8 17h1M15 9h1M15 13h1M15 17h1" />
-                </Icon>
-                <input
-                  id="cnpj"
-                  value={cnpj}
-                  onChange={(event) => {
-                    setCnpj(event.target.value);
-                    setError("");
-                  }}
-                  placeholder="00.000.000/0000-00"
-                  inputMode="numeric"
-                  aria-describedby={error ? "search-error" : "search-hint"}
-                  aria-invalid={error ? true : undefined}
-                />
-              </div>
-              <button className="primary-button" type="submit" disabled={isLoading}>
-                <Icon>
-                  <circle cx="11" cy="11" r="6.5" />
-                  <path d="m16 16 4 4" />
-                </Icon>
-                {isLoading ? "Consultando..." : "Consultar"}
-              </button>
-            </div>
-            {error ? (
-              <p id="search-error" className="search-error" role="alert">{error}</p>
-            ) : (
-              <p id="search-hint">Informe os 14 dígitos do Cadastro Nacional da Pessoa Jurídica.</p>
-            )}
-          </form>
         </div>
-        <aside className="system-stats" aria-label="Estatísticas do sistema">
-          <div className="stats-heading">
-            <span>SISTEMA EM TEMPO REAL</span>
-            <i />
+        <button className="primary-button" type="submit" disabled={isLoading}>
+          {isLoading && <span className="spinner" aria-hidden="true" />}
+          {isLoading ? "Consultando..." : "Consultar"}
+        </button>
+      </div>
+      {error ? (
+        <p id={`${inputId}-error`} className="search-error" role="alert">{error}</p>
+      ) : (
+        !compact && <p id={`${inputId}-hint`} className="search-hint">Informe os 14 dígitos do Cadastro Nacional da Pessoa Jurídica.</p>
+      )}
+    </form>
+  );
+}
+
+function SearchScreen({
+  onLoad,
+  recentSearches,
+}: {
+  onLoad: (company: CompanyData) => void;
+  recentSearches: RecentSearch[];
+}) {
+  const consulta = useConsulta(onLoad);
+  const { isLoading, consultar } = consulta;
+  const root = useRef<HTMLElement>(null);
+
+  useGSAP(() => {
+    if (prefersReducedMotion()) return;
+    gsap.from(".reveal", { autoAlpha: 0, y: 16, duration: 0.5, ease: "power2.out", stagger: 0.08 });
+  }, { scope: root });
+
+  return (
+    <main className="screen search-screen" ref={root}>
+      <section className="zone zone-search">
+        <span className="eyebrow reveal">Inteligência pré-investigativa</span>
+        <h1 className="reveal">Consulta de pessoa jurídica</h1>
+        <p className="lede reveal">
+          Cruza dados públicos da Receita Federal e do Banco Central para identificar intermediadoras de pagamento
+          suspeitas e apontar justa causa para PIC ou IP.
+        </p>
+        <div className="reveal search-holder">
+          <SearchField consulta={consulta} />
+        </div>
+        <dl className="session-stats reveal" aria-label="Estatísticas da sessão">
+          <div>
+            <dt>Consultas nesta sessão</dt>
+            <dd>{recentSearches.length}</dd>
           </div>
-          <div className="stat-item">
-            <span>Consultas nesta sessão</span>
-            <strong>{recentSearches.length}</strong>
+          <div className="alert-stat">
+            <dt>Alertas de risco alto ou crítico</dt>
+            <dd>{recentSearches.filter((item) => item.company.classificacao === "ALTO" || item.company.classificacao === "CRÍTICO").length}</dd>
           </div>
-          <div className="stat-item alert-stat">
-            <span>Alertas de risco ALTO</span>
-            <strong>{recentSearches.filter((item) => item.company.classificacao === "ALTO").length}</strong>
+          <div>
+            <dt>Última consulta</dt>
+            <dd>{recentSearches[0]?.date ?? "Nenhuma ainda"}</dd>
           </div>
-          <div className="stat-update">
-            <Icon><path d="M20 12a8 8 0 1 1-2.35-5.65M20 4v6h-6" /></Icon>
-            <span>Última consulta<strong>{recentSearches[0]?.date ?? "Nenhuma ainda"}</strong></span>
-          </div>
-        </aside>
+        </dl>
       </section>
 
-      <section className="panel recent-panel">
+      <section className="panel recent-panel reveal">
         <div className="section-heading">
           <div>
-            <span className="eyebrow">HISTÓRICO</span>
+            <span className="eyebrow">Histórico</span>
             <h2>Consultas recentes</h2>
           </div>
-          <button className="text-button" type="button">
-            Ver histórico completo
-            <Icon>
-              <path d="m9 18 6-6-6-6" />
-            </Icon>
-          </button>
         </div>
         <div className="table-scroll">
           <table>
@@ -293,7 +379,7 @@ function SearchScreen({
             <tbody>
               {recentSearches.length === 0 && (
                 <tr>
-                  <td colSpan={5}>Nenhuma consulta realizada nesta sessão.</td>
+                  <td colSpan={5} className="empty-row">Nenhuma consulta realizada nesta sessão.</td>
                 </tr>
               )}
               {recentSearches.map(({ company, date }) => (
@@ -317,120 +403,47 @@ function SearchScreen({
   );
 }
 
-function AnalysisScreen({
-  company,
-  consultedAt,
-  onReport,
-}: {
-  company: CompanyData;
-  consultedAt: Date;
-  onReport: () => void;
-}) {
-  const gaugeOffset = 603 * (1 - company.scoreTotal / 100);
-  const details = [
-    ["Nome fantasia", company.nomeFantasia],
-    ["Data de abertura", company.dataAbertura],
-    ["Atividade declarada (CNAE)", `${company.cnae} — ${company.cnaeDescricao}`],
-    ["Porte", company.porte],
-    ["Capital social", company.capitalSocial],
-    ["Sede", `${company.municipio}/${company.uf}`],
-  ];
+function ScoreGauge({ score, risk }: { score: number; risk: Risk }) {
+  const root = useRef<HTMLDivElement>(null);
+  const arc = useRef<SVGCircleElement>(null);
+  const value = useRef<HTMLElement>(null);
+
+  useGSAP(() => {
+    const estado = { v: 0 };
+    const desenhar = () => {
+      const preenchido = Math.min(Math.max(estado.v, 0), 100) / 100;
+      arc.current?.style.setProperty("stroke-dashoffset", String(GAUGE_CIRCUMFERENCE * (1 - preenchido)));
+      if (value.current) value.current.textContent = String(Math.round(estado.v));
+    };
+
+    if (prefersReducedMotion()) {
+      estado.v = score;
+      desenhar();
+      return;
+    }
+    desenhar();
+    gsap.to(estado, { v: score, duration: 0.8, ease: "power2.out", onUpdate: desenhar });
+  }, { scope: root, dependencies: [score] });
 
   return (
-    <main className="screen analysis-screen">
-      <div className="analysis-heading">
-        <PageTitle
-          eyebrow={`DOSSIÊ ${dossierNumber(company)}`}
-          title="Análise de risco"
-          description="Consolidação de sinais cadastrais, societários e regulatórios."
+    <div className="gauge" ref={root}>
+      <svg viewBox="0 0 240 240" role="img" aria-label={`Score de risco ${score} de 100`}>
+        <circle className="gauge-track" cx="120" cy="120" r="96" />
+        <circle className="gauge-ticks" cx="120" cy="120" r="110" />
+        <circle
+          ref={arc}
+          className={`gauge-value ${riskClass(risk)}`}
+          cx="120"
+          cy="120"
+          r="96"
+          style={{ strokeDasharray: GAUGE_CIRCUMFERENCE, strokeDashoffset: GAUGE_CIRCUMFERENCE }}
         />
-        <button className="secondary-button" onClick={onReport} type="button">
-          <Icon><path d="M6 2h8l4 4v16H6zM14 2v5h5" /></Icon>
-          Gerar relatório
-        </button>
+      </svg>
+      <div className="gauge-copy" aria-hidden="true">
+        <strong ref={value}>0</strong>
+        <span>de 100</span>
       </div>
-
-      <div className="analysis-grid">
-        <section className="panel identity-card">
-          <div className="section-kicker">
-            <span>IDENTIFICAÇÃO</span>
-            <span className="status-dot">{company.situacaoCadastral.toUpperCase()}</span>
-          </div>
-          <div className="company-emblem">{companyInitials(company.razaoSocial)}</div>
-          <h2>{company.razaoSocial}</h2>
-          <p className="mono prominent">{company.cnpj}</p>
-          <dl>
-            {details.map(([term, value]) => (
-              <div key={term}>
-                <dt>{term}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-            <div>
-              <dt>{company.socios.length > 1 ? "Sócios" : "Sócio"}</dt>
-              {company.socios.map((socio) => (
-                <dd key={socio.nome}>
-                  {socio.nome} ({socio.qualificacao})
-                  {socio.cnpjsAtivos !== undefined && ` · ${socio.cnpjsAtivos} CNPJs ativos vinculados`}
-                </dd>
-              ))}
-            </div>
-            <div>
-              <dt>Cadastro BACEN</dt>
-              <dd className={company.apareceBacen ? "success-text" : undefined}>
-                {company.apareceBacen ? "Consta" : "Não consta"}
-              </dd>
-            </div>
-            <div>
-              <dt>Ranking de Reclamações</dt>
-              <dd>{company.aparecRanking ? "Consta" : "Não consta"}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="panel score-card">
-          <div className="section-kicker"><span>SCORE CONSOLIDADO</span><span>0—100</span></div>
-          <div className="gauge">
-            <svg viewBox="0 0 240 240" aria-label={`Score de risco ${company.scoreTotal} de 100`}>
-              <circle className="gauge-track" cx="120" cy="120" r="96" />
-              <circle className={`gauge-value ${company.classificacao.toLowerCase().replace("é", "e")}`} cx="120" cy="120" r="96" style={{ strokeDashoffset: gaugeOffset }} />
-            </svg>
-            <div className="gauge-copy">
-              <strong>{company.scoreTotal}</strong>
-              <span>/ 100</span>
-            </div>
-          </div>
-          <RiskBadge risk={company.classificacao} />
-          <p className="score-note">{riskNotes[company.classificacao]}</p>
-        </section>
-
-        <section className="panel indicators-card">
-          <div className="section-kicker"><span>INDICADORES EULE</span><span>{company.indicadores.length} SINAIS</span></div>
-          <div className="indicator-list">
-            {company.indicadores.map((indicador) => (
-              <div className={indicador.peso >= 25 ? "indicator primary" : "indicator"} key={indicador.id} title={indicador.observado}>
-                <div className="indicator-meta">
-                  <span><i>{indicador.id}</i>{indicador.label}<em>máx. {indicador.peso}</em></span>
-                  <strong>{indicador.score}</strong>
-                </div>
-                <div className="progress-track">
-                  <div
-                    className={`progress-value ${indicatorLevel(indicador)}`}
-                    style={{ width: `${(indicador.score / indicador.peso) * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <div className="source-bar">
-        <Icon><path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10Z" /><path d="m9 12 2 2 4-5" /></Icon>
-        <span><strong>Fontes consultadas:</strong> Receita Federal (cadastro de CNPJ), Cadastro de instituições autorizadas do BACEN e Ranking de Reclamações do BACEN.</span>
-        <span>Consultado em {formatTimestamp(consultedAt)}</span>
-      </div>
-    </main>
+    </div>
   );
 }
 
@@ -451,6 +464,165 @@ function ObservadoCell({ texto }: { texto: string }) {
   );
 }
 
+const levelLabels: Record<ReturnType<typeof indicatorLevel>, string> = {
+  high: "Sinal forte",
+  medium: "Sinal moderado",
+  low: "Sem sinal relevante",
+  na: "Não avaliado",
+};
+
+function IndicatorCard({ indicador }: { indicador: Indicador }) {
+  const level = indicatorLevel(indicador);
+
+  return (
+    <li className={`indicator-card ${level}`}>
+      <span className="status-bar" aria-hidden="true" />
+      <div className="indicator-body">
+        <div className="indicator-head">
+          <span className="indicator-code">{indicador.id}</span>
+          <h3>{indicador.label}</h3>
+          <span className="indicator-score">
+            <strong>{indicador.score}</strong>
+            <small>/ {indicador.peso}</small>
+          </span>
+        </div>
+        <p className="indicator-description"><ObservadoCell texto={indicador.observado} /></p>
+        <div className="indicator-foot">
+          <TipoTag tipo={indicador.tipo} />
+          <span className={`level-label ${level}`}>{levelLabels[level]}</span>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function AnalysisScreen({
+  company,
+  consultedAt,
+  onLoad,
+  onReport,
+}: {
+  company: CompanyData;
+  consultedAt: Date;
+  onLoad: (company: CompanyData) => void;
+  onReport: () => void;
+}) {
+  const consulta = useConsulta(onLoad);
+  const root = useRef<HTMLElement>(null);
+  const details = [
+    ["Nome fantasia", company.nomeFantasia],
+    ["Data de abertura", company.dataAbertura],
+    ["Atividade declarada (CNAE)", `${company.cnae} — ${company.cnaeDescricao}`],
+    ["Porte", company.porte],
+    ["Capital social", company.capitalSocial],
+    ["Sede", `${company.municipio}/${company.uf}`],
+    ["Cadastro BACEN", company.apareceBacen ? "Consta" : "Não consta"],
+    ["Ranking de Reclamações", company.aparecRanking ? "Consta" : "Não consta"],
+    ["Sanções CEIS/CNEP (CGU)", situacaoFonte(
+      company.fontes.sancaoCeis === null && company.fontes.sancaoCnep === null ? null : company.fontes.sancaoCeis === true || company.fontes.sancaoCnep === true,
+      company.fontes.descricaoSancao ?? "Sanção ativa",
+      "Sem sanção registrada",
+    )],
+    ["Dívida ativa da União (PGFN)", situacaoFonte(
+      company.fontes.dividaAtivaPgfn,
+      `Inscrita · ${company.fontes.valorDividaPgfn ?? "valor não informado"}`,
+      "Sem dívida ativa",
+    )],
+    ["Processo criminal de sócio (DataJud)", company.fontes.socioProcessoCriminal === null
+      ? "Não avaliado (CPF mascarado ou fonte indisponível)"
+      : company.fontes.socioProcessoCriminal
+        ? `${company.fontes.nomeSocioProcessado} · ${company.fontes.numeroProcessos} processo(s)`
+        : "Nenhum processo criminal encontrado"],
+  ];
+
+  useGSAP(() => {
+    if (prefersReducedMotion()) return;
+    const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
+    tl.from(".zone-score", { autoAlpha: 0, y: 12, duration: 0.45 })
+      .from(".zone-report", { height: 0, autoAlpha: 0, duration: 0.6, clearProps: "height" }, "-=0.15")
+      .from(".zone-report .alert-banner", { autoAlpha: 0, scale: 0.94, duration: 0.55, ease: "power3.out" }, "-=0.25")
+      .from(".indicator-card", { autoAlpha: 0, y: 14, duration: 0.4, stagger: 0.06 }, "-=0.3")
+      .from(".report-extra", { autoAlpha: 0, y: 10, duration: 0.4, stagger: 0.06 }, "-=0.2");
+  }, { scope: root, dependencies: [company], revertOnUpdate: true });
+
+  return (
+    <main className="screen analysis-screen" ref={root}>
+      <section className="zone zone-search compact" aria-label="Nova consulta">
+        <SearchField consulta={consulta} compact />
+      </section>
+
+      <section className="zone zone-score" aria-labelledby="company-name">
+        <div className="company-line">
+          <div className="company-emblem" aria-hidden="true">{companyInitials(company.razaoSocial)}</div>
+          <div>
+            <span className="eyebrow">Dossiê {dossierNumber(company)}</span>
+            <h1 id="company-name">{company.razaoSocial}</h1>
+            <p className="company-sub">
+              <span className="mono">{company.cnpj}</span>
+              <span className="status-dot">{company.situacaoCadastral}</span>
+              <span>{company.municipio}/{company.uf}</span>
+            </p>
+          </div>
+        </div>
+        <ScoreGauge score={company.scoreTotal} risk={company.classificacao} />
+        <RiskBadge risk={company.classificacao} large />
+        <p className="score-note">{riskNotes[company.classificacao]}</p>
+      </section>
+
+      <section className="zone zone-report" aria-labelledby="report-heading">
+        <div className="report-inner">
+          <JustaCausaBanner company={company} />
+
+          <div className="report-heading">
+            <div>
+              <span className="eyebrow">Relatório de indicadores</span>
+              <h2 id="report-heading">{company.indicadores.length} sinais avaliados</h2>
+            </div>
+            <button className="secondary-button" onClick={onReport} type="button">
+              <Icon><path d="M6 2h8l4 4v16H6zM14 2v5h5" /></Icon>
+              Gerar relatório formal
+            </button>
+          </div>
+
+          <ul className="indicator-list">
+            {company.indicadores.map((indicador) => (
+              <IndicatorCard indicador={indicador} key={indicador.id} />
+            ))}
+          </ul>
+
+          <div className="report-extra panel company-details">
+            <h3>Identificação cadastral</h3>
+            <dl>
+              {details.map(([term, value]) => (
+                <div key={term}>
+                  <dt>{term}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+              <div className="wide">
+                <dt>{company.socios.length > 1 ? "Sócios" : "Sócio"}</dt>
+                {company.socios.slice(0, MAX_SOCIOS).map((socio) => (
+                  <dd key={socio.nome}>
+                    {socio.nome} ({socio.qualificacao})
+                    {socio.cnpjsAtivos !== undefined && ` · ${socio.cnpjsAtivos} CNPJs ativos vinculados`}
+                  </dd>
+                ))}
+                {company.socios.length > MAX_SOCIOS && <dd>e mais {company.socios.length - MAX_SOCIOS} sócios</dd>}
+              </div>
+            </dl>
+          </div>
+
+          <div className="report-extra source-bar">
+            <Icon><path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10Z" /><path d="m9 12 2 2 4-5" /></Icon>
+            <span><strong>Fontes consultadas:</strong> Receita Federal (cadastro de CNPJ), Cadastro de instituições autorizadas e Ranking de Reclamações do BACEN, CEIS/CNEP (CGU), lista de devedores da PGFN e DataJud (CNJ).</span>
+            <span className="source-time">Consultado em {formatTimestamp(consultedAt)}</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 const recommendations = [
   "Instaurar PIC com base nos indícios levantados.",
   "Solicitar RIF ao COAF após instauração do PIC.",
@@ -461,12 +633,27 @@ const recommendations = [
 
 function ReportScreen({ company, consultedAt }: { company: CompanyData; consultedAt: Date }) {
   const reference = `EULE-${consultedAt.getFullYear()}-${dossierNumber(company)}`;
+  const root = useRef<HTMLElement>(null);
+
+  useGSAP(() => {
+    if (prefersReducedMotion()) return;
+    gsap.from(".report-document", { autoAlpha: 0, y: 20, duration: 0.5, ease: "power2.out" });
+    gsap.utils.toArray<HTMLElement>(".scroll-reveal").forEach((el) => {
+      gsap.from(el, {
+        autoAlpha: 0,
+        y: 24,
+        duration: 0.5,
+        ease: "power2.out",
+        scrollTrigger: { trigger: el, start: "top 88%", once: true },
+      });
+    });
+  }, { scope: root });
 
   return (
-    <main className="screen report-screen">
+    <main className="screen report-screen" ref={root}>
       <div className="report-toolbar">
         <div>
-          <span className="eyebrow">RELATÓRIO DE INTELIGÊNCIA</span>
+          <span className="eyebrow">Relatório de inteligência</span>
           <span className="toolbar-state"><i /> Documento concluído</span>
         </div>
         <div className="toolbar-actions">
@@ -474,7 +661,7 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
             <Icon><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></Icon>
             Exportar PDF
           </button>
-          <button className="primary-button compact" type="button">
+          <button className="primary-button" type="button">
             <Icon><path d="M18 8a3 3 0 1 0-2.8-4M6 14a3 3 0 1 0 0 6M18 14a3 3 0 1 0 0 6M8.7 17.5l6.6-3M8.7 6.5l6.6 3" /></Icon>
             Compartilhar
           </button>
@@ -485,24 +672,28 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
         <header className="report-header">
           <div className="report-brand">
             <OwlLogo />
-            <div><strong>EULE</strong><span>MINISTÉRIO PÚBLICO · INTELIGÊNCIA INSTITUCIONAL</span></div>
+            <div><strong>EULE</strong><span>Ministério Público da Bahia · NUCCIBER</span></div>
           </div>
-          <div className="report-meta">
-            <span>GERADO EM</span><strong>{formatTimestamp(consultedAt).toUpperCase()}</strong>
-            <span>REFERÊNCIA</span><strong>{reference}</strong>
-          </div>
+          <dl className="report-meta">
+            <dt>Gerado em</dt><dd>{formatTimestamp(consultedAt)}</dd>
+            <dt>Referência</dt><dd>{reference}</dd>
+          </dl>
         </header>
 
-        <div className="classification">USO RESTRITO · INFORMAÇÃO DE INTELIGÊNCIA</div>
+        <div className="classification">Uso restrito · Informação de inteligência</div>
         <div className="report-title">
-          <span>RELATÓRIO DE ANÁLISE PRÉ-INVESTIGATIVA</span>
+          <span>Relatório de análise pré-investigativa</span>
           <h1>{company.razaoSocial}</h1>
           <p>CNPJ {company.cnpj} · {company.municipio}/{company.uf} · Abertura em {company.dataAbertura}</p>
         </div>
 
-        <section className="executive-summary">
+        <div className="report-alert">
+          <JustaCausaBanner company={company} />
+        </div>
+
+        <section className={`executive-summary ${riskClass(company.classificacao)}`}>
           <div>
-            <span className="report-label">01 · SUMÁRIO EXECUTIVO</span>
+            <span className="report-label">01 · Sumário executivo</span>
             <h2>Classificação de risco {company.classificacao.toLowerCase()}</h2>
             <p>
               Empresa de porte {company.porte.toLowerCase()}, capital social de {company.capitalSocial}, com CNAE {company.cnae} ({company.cnaeDescricao}).
@@ -518,20 +709,21 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
               {company.apareceBacen ? "Consta" : "Não consta"} no Cadastro BACEN e {company.aparecRanking ? "consta" : "não consta"} no Ranking de Reclamações.
             </p>
           </div>
-          <div className="summary-score"><strong>{company.scoreTotal}</strong><span>RISCO {company.classificacao}</span></div>
+          <div className="summary-score"><strong>{company.scoreTotal}</strong><span>Risco {company.classificacao}</span></div>
         </section>
 
-        <section className="report-section">
-          <span className="report-label">02 · MATRIZ DE INDICADORES</span>
+        <section className="report-section scroll-reveal">
+          <span className="report-label">02 · Matriz de indicadores</span>
           <div className="table-scroll">
             <table className="report-table">
-              <thead><tr><th>Indicador analisado</th><th>Peso máx.</th><th>Score</th><th>Valor observado</th></tr></thead>
+              <thead><tr><th>Indicador analisado</th><th>Tipo</th><th>Peso máx.</th><th>Score</th><th>Valor observado</th></tr></thead>
               <tbody>
                 {company.indicadores.map((indicador) => (
                   <tr key={indicador.id}>
-                    <td>{indicador.id} · {indicador.label}</td>
+                    <td className="indicator-name-cell">{indicador.id} · {indicador.label}</td>
+                    <td><TipoTag tipo={indicador.tipo} /></td>
                     <td>{indicador.peso}</td>
-                    <td className="score-cell">{indicador.score}</td>
+                    <td className={`score-cell ${indicatorLevel(indicador)}`}>{indicador.score}</td>
                     <td><ObservadoCell texto={indicador.observado} /></td>
                   </tr>
                 ))}
@@ -540,9 +732,9 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           </div>
         </section>
 
-        <div className="report-columns">
+        <div className="report-columns scroll-reveal">
           <section className="report-section legal-section">
-            <span className="report-label">03 · FUNDAMENTAÇÃO JURÍDICA</span>
+            <span className="report-label">03 · Fundamentação jurídica</span>
             <h2>STF · Tema 1404 (RE 1.537.165)</h2>
             <p>A presente análise observa a tese de repercussão geral fixada pelo Supremo Tribunal Federal no Tema 1404 (RE 1.537.165), respeitando os limites de acesso, tratamento e compartilhamento de dados por órgãos de persecução.</p>
             <p>Considera-se ainda a Resolução Conjunta nº 16/2025 do BCB/CMN, que proíbe a utilização de contas-bolsão, com prazo até 31/12/2026.</p>
@@ -550,7 +742,7 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           </section>
 
           <section className="report-section recommendations">
-            <span className="report-label">04 · RECOMENDAÇÕES</span>
+            <span className="report-label">04 · Recomendações</span>
             <ol>
               {recommendations.map((item, index) => (
                 <li key={item}><span>{String(index + 1).padStart(2, "0")}</span>{item}</li>
@@ -561,7 +753,7 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
 
         <footer className="report-footer">
           <p>Este documento é produto de inteligência e não constitui, isoladamente, prova de ilícito. As informações devem ser corroboradas por diligências próprias antes de qualquer medida administrativa ou judicial.</p>
-          <span>EULE · {reference} · PÁGINA 1/1</span>
+          <span>EULE · {reference} · Página 1/1</span>
         </footer>
       </article>
     </main>
@@ -590,7 +782,7 @@ export default function App() {
       {screen === "search" && <SearchScreen onLoad={loadCompany} recentSearches={recentSearches} />}
       {screen === "analysis" &&
         (company ? (
-          <AnalysisScreen company={company} consultedAt={consultedAt} onReport={() => setScreen("report")} />
+          <AnalysisScreen company={company} consultedAt={consultedAt} onLoad={loadCompany} onReport={() => setScreen("report")} />
         ) : (
           <EmptyState onSearch={() => setScreen("search")} />
         ))}

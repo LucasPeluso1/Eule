@@ -192,3 +192,98 @@ public class InconsistenciaGeografica : IIndicador
         FonteConsultada = "Receita Federal (publica.cnpj.ws) – endereço",
     };
 }
+
+/// <summary>07 · Sanção ativa no CEIS ou CNEP (CGU) (peso 25). Indício jurídico.</summary>
+public class SancaoCeisCnep : IIndicador
+{
+    public const int Peso = 25;
+
+    public IndicadorResultado Avaliar(ContextoAvaliacao ctx)
+    {
+        var s = ctx.Sancoes;
+        var positivo = s is not null && (s.Ceis == true || s.Cnep == true);
+
+        string texto;
+        if (s is null)
+            texto = "NÃO AVALIADO. Portal da Transparência (CEIS e CNEP) indisponível no momento da consulta.";
+        else if (positivo)
+            texto = $"Sanção registrada no Portal da Transparência. {Descrever(s)}";
+        else
+            texto = $"Sem registro no {Listas(s)} para o CNPJ consultado." +
+                    (s.Ceis is null || s.Cnep is null ? $" A lista {(s.Ceis is null ? "CEIS" : "CNEP")} não respondeu." : "");
+
+        return new IndicadorResultado
+        {
+            Codigo = "07",
+            Descricao = "Sanção administrativa ativa (CEIS/CNEP)",
+            PesoMaximo = Peso,
+            ScoreObtido = positivo ? Peso : 0,
+            Fundamentacao = texto,
+            FonteConsultada = "CGU – Portal da Transparência (CEIS e CNEP)",
+            Tipo = TiposIndicador.IndicioJuridico,
+        };
+    }
+
+    private static string Descrever(ResultadoSancoes s) =>
+        s.Descricao ?? $"Lista(s): {string.Join(", ", new[] { s.Ceis == true ? "CEIS" : null, s.Cnep == true ? "CNEP" : null }.OfType<string>())}.";
+
+    private static string Listas(ResultadoSancoes s) =>
+        (s.Ceis, s.Cnep) switch
+        {
+            (not null, not null) => "CEIS nem no CNEP",
+            (not null, null) => "CEIS",
+            _ => "CNEP",
+        };
+}
+
+/// <summary>08 · Inscrição em dívida ativa da União (PGFN) (peso 15). Fator de risco.</summary>
+public class DividaAtivaPgfn : IIndicador
+{
+    public const int Peso = 15;
+
+    public IndicadorResultado Avaliar(ContextoAvaliacao ctx)
+    {
+        var p = ctx.Pgfn;
+        return new IndicadorResultado
+        {
+            Codigo = "08",
+            Descricao = "Inscrição em dívida ativa da União (PGFN)",
+            PesoMaximo = Peso,
+            ScoreObtido = p?.PossuiDivida == true ? Peso : 0,
+            Fundamentacao = p is null
+                ? "NÃO AVALIADO. Lista de devedores da PGFN indisponível no momento da consulta."
+                : p.PossuiDivida
+                    ? $"Consta na lista de devedores da PGFN com dívida ativa total de R$ {p.Valor:N2}."
+                    : "Não consta dívida ativa na lista de devedores da PGFN.",
+            FonteConsultada = "PGFN – Lista de devedores",
+        };
+    }
+}
+
+/// <summary>09 · Sócio com processo criminal (DataJud/CNJ, TJBA) (peso 20). Indício jurídico.</summary>
+public class SocioProcessoCriminal : IIndicador
+{
+    public const int Peso = 20;
+
+    public IndicadorResultado Avaliar(ContextoAvaliacao ctx)
+    {
+        var d = ctx.DataJud;
+        return new IndicadorResultado
+        {
+            Codigo = "09",
+            Descricao = "Sócio com processo criminal (DataJud)",
+            PesoMaximo = Peso,
+            ScoreObtido = d?.SocioComProcessoCriminal == true ? Peso : 0,
+            Fundamentacao = d is null
+                ? "NÃO AVALIADO. A Receita informa o CPF dos sócios mascarado (ou o DataJud não respondeu), " +
+                  "então não foi possível consultar processos. Cabe pesquisa manual pelo analista."
+                : d.SocioComProcessoCriminal
+                    ? $"{d.NumeroProcessos} processo(s) no TJBA com classe ou assunto envolvendo crime, fraude ou estelionato, " +
+                      $"vinculados ao CPF de {d.NomeSocio}. {d.SociosConsultados} sócio(s) consultado(s)."
+                    : $"Nenhum processo criminal (crime, fraude ou estelionato) encontrado no TJBA para {d.SociosConsultados} sócio(s) consultado(s).",
+            FonteConsultada = "CNJ – DataJud (API pública, TJBA)",
+            Tipo = TiposIndicador.IndicioJuridico,
+        };
+    }
+}
+

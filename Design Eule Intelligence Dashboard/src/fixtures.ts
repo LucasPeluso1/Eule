@@ -1,4 +1,8 @@
-export type Risk = "ALTO" | "MÉDIO" | "BAIXO";
+export type Risk = "CRÍTICO" | "ALTO" | "MÉDIO" | "BAIXO";
+
+export type TipoIndicador = "INDICIO_JURIDICO" | "FATOR_RISCO";
+
+export type TipoAlerta = "FUNDAMENTO_PIC" | "SUSPEITA_QUALIFICADA" | "RISCO_ELEVADO" | "RISCO_MODERADO";
 
 export interface Socio {
   nome: string;
@@ -10,10 +14,23 @@ export interface Socio {
 export interface Indicador {
   id: string;
   label: string;
-  /** Peso máximo do indicador na pontuação (soma dos seis = 100). */
+  /** Peso máximo do indicador na pontuação. */
   peso: number;
   score: number;
   observado: string;
+  tipo: TipoIndicador;
+}
+
+/** Fontes complementares (indicadores 07–09). `null` significa fonte indisponível ou não consultável. */
+export interface FontesComplementares {
+  sancaoCeis: boolean | null;
+  sancaoCnep: boolean | null;
+  descricaoSancao: string | null;
+  dividaAtivaPgfn: boolean | null;
+  valorDividaPgfn: string | null;
+  socioProcessoCriminal: boolean | null;
+  nomeSocioProcessado: string | null;
+  numeroProcessos: number | null;
 }
 
 export interface CompanyData {
@@ -32,9 +49,22 @@ export interface CompanyData {
   apareceBacen: boolean;
   aparecRanking: boolean;
   indicadores: Indicador[];
+  fontes: FontesComplementares;
   scoreTotal: number;
   classificacao: Risk;
+  tipoAlertaGeral: TipoAlerta;
 }
+
+const semFontesComplementares: FontesComplementares = {
+  sancaoCeis: null,
+  sancaoCnep: null,
+  descricaoSancao: null,
+  dividaAtivaPgfn: null,
+  valorDividaPgfn: null,
+  socioProcessoCriminal: null,
+  nomeSocioProcessado: null,
+  numeroProcessos: null,
+};
 
 const sumScores = (indicadores: Indicador[]) =>
   indicadores.reduce((total, item) => total + item.score, 0);
@@ -55,24 +85,26 @@ export const globalVenture: CompanyData = {
   apareceBacen: false,
   aparecRanking: false,
   indicadores: [
-    { id: "01", label: "Constituição recente com capital incompatível", peso: 25, score: 25, observado: "Aberta em 17/07/2026 (menos de 3 meses), capital social de R$ 50.000,00" },
-    { id: "02", label: "Ausência de autorização regulatória BACEN", peso: 25, score: 25, observado: "Não consta no Cadastro de instituições autorizadas pelo BACEN" },
-    { id: "03", label: "Inconsistência de objeto social (CNAE vs atividade real)", peso: 20, score: 20, observado: "CNAE 62.01-5-01 (desenvolvimento de software) incompatível com intermediação de pagamentos" },
-    { id: "04", label: "Cruzamento societário atípico", peso: 15, score: 0, observado: "Sem vínculos societários atípicos identificados" },
-    { id: "05", label: "Ausência no Ranking de Reclamações BACEN", peso: 10, score: 2, observado: "Não consta no ranking; empresa com menos de 3 meses, sem histórico suficiente" },
-    { id: "06", label: "Inconsistência geográfica (sede vs operação)", peso: 5, score: 0, observado: "Sem inconsistência geográfica identificada" },
+    { id: "01", label: "Constituição recente com capital incompatível", peso: 25, score: 25, observado: "Aberta em 17/07/2026 (menos de 3 meses), capital social de R$ 50.000,00", tipo: "FATOR_RISCO" },
+    { id: "02", label: "Ausência de autorização regulatória BACEN", peso: 25, score: 25, observado: "Não consta no Cadastro de instituições autorizadas pelo BACEN", tipo: "FATOR_RISCO" },
+    { id: "03", label: "Inconsistência de objeto social (CNAE vs atividade real)", peso: 20, score: 20, observado: "CNAE 62.01-5-01 (desenvolvimento de software) incompatível com intermediação de pagamentos", tipo: "FATOR_RISCO" },
+    { id: "04", label: "Cruzamento societário atípico", peso: 15, score: 0, observado: "Sem vínculos societários atípicos identificados", tipo: "FATOR_RISCO" },
+    { id: "05", label: "Ausência no Ranking de Reclamações BACEN", peso: 10, score: 2, observado: "Não consta no ranking; empresa com menos de 3 meses, sem histórico suficiente", tipo: "FATOR_RISCO" },
+    { id: "06", label: "Inconsistência geográfica (sede vs operação)", peso: 5, score: 0, observado: "Sem inconsistência geográfica identificada", tipo: "FATOR_RISCO" },
   ],
+  fontes: semFontesComplementares,
   scoreTotal: 72,
   classificacao: "ALTO",
+  tipoAlertaGeral: "RISCO_ELEVADO",
 };
 
 const caitecIndicadores: Indicador[] = [
-  { id: "01", label: "Constituição recente com capital incompatível", peso: 25, score: 18, observado: "Aberta em 28/04/2026, capital social de R$ 100.000,00" },
-  { id: "02", label: "Ausência de autorização regulatória BACEN", peso: 25, score: 25, observado: "Não consta no Cadastro de instituições autorizadas pelo BACEN" },
-  { id: "03", label: "Inconsistência de objeto social (CNAE vs atividade real)", peso: 20, score: 20, observado: "CNAE 73.19-0-03 (marketing direto) incompatível com intermediação de pagamentos" },
-  { id: "04", label: "Cruzamento societário atípico", peso: 15, score: 15, observado: "Sócia-administradora com 19 CNPJs ativos vinculados" },
-  { id: "05", label: "Ausência no Ranking de Reclamações BACEN", peso: 10, score: 0, observado: "Não registrada no ranking" },
-  { id: "06", label: "Inconsistência geográfica (sede vs operação)", peso: 5, score: 0, observado: "Sem inconsistência geográfica identificada" },
+  { id: "01", label: "Constituição recente com capital incompatível", peso: 25, score: 18, observado: "Aberta em 28/04/2026, capital social de R$ 100.000,00", tipo: "FATOR_RISCO" },
+  { id: "02", label: "Ausência de autorização regulatória BACEN", peso: 25, score: 25, observado: "Não consta no Cadastro de instituições autorizadas pelo BACEN", tipo: "FATOR_RISCO" },
+  { id: "03", label: "Inconsistência de objeto social (CNAE vs atividade real)", peso: 20, score: 20, observado: "CNAE 73.19-0-03 (marketing direto) incompatível com intermediação de pagamentos", tipo: "FATOR_RISCO" },
+  { id: "04", label: "Cruzamento societário atípico", peso: 15, score: 15, observado: "Sócia-administradora com 19 CNPJs ativos vinculados", tipo: "FATOR_RISCO" },
+  { id: "05", label: "Ausência no Ranking de Reclamações BACEN", peso: 10, score: 0, observado: "Não registrada no ranking", tipo: "FATOR_RISCO" },
+  { id: "06", label: "Inconsistência geográfica (sede vs operação)", peso: 5, score: 0, observado: "Sem inconsistência geográfica identificada", tipo: "FATOR_RISCO" },
 ];
 
 export const caitec: CompanyData = {
@@ -91,8 +123,10 @@ export const caitec: CompanyData = {
   apareceBacen: false,
   aparecRanking: false,
   indicadores: caitecIndicadores,
+  fontes: semFontesComplementares,
   scoreTotal: sumScores(caitecIndicadores),
   classificacao: "ALTO",
+  tipoAlertaGeral: "RISCO_ELEVADO",
 };
 
 export interface RecentSearch {

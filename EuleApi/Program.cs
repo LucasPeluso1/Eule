@@ -49,12 +49,20 @@ Resiliencia(builder.Services.AddHttpClient<IReceitaClient, ReceitaClient>(), Tim
 Resiliencia(builder.Services.AddHttpClient<IBacenAutorizacaoClient, BacenAutorizacaoClient>(), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(50));
 Resiliencia(builder.Services.AddHttpClient<IRankingReclamacoesClient, RankingReclamacoesClient>(), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(100));
 
+// Fontes complementares: timeouts curtos, pois uma falha só deixa o campo null.
+Resiliencia(builder.Services.AddHttpClient<ICguSancoesClient, CguSancoesClient>(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(25));
+Resiliencia(builder.Services.AddHttpClient<IPgfnClient, PgfnClient>(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(25));
+Resiliencia(builder.Services.AddHttpClient<IDataJudClient, DataJudClient>(), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(25));
+
 builder.Services.AddSingleton<IIndicador, ConstituicaoRecenteCapitalIncompativel>();
 builder.Services.AddSingleton<IIndicador, AusenciaAutorizacaoBacen>();
 builder.Services.AddSingleton<IIndicador, InconsistenciaCnae>();
 builder.Services.AddSingleton<IIndicador, CruzamentoSocietario>();
 builder.Services.AddSingleton<IIndicador, AusenciaRanking>();
 builder.Services.AddSingleton<IIndicador, InconsistenciaGeografica>();
+builder.Services.AddSingleton<IIndicador, SancaoCeisCnep>();
+builder.Services.AddSingleton<IIndicador, DividaAtivaPgfn>();
+builder.Services.AddSingleton<IIndicador, SocioProcessoCriminal>();
 builder.Services.AddScoped<IEmpresaService, EmpresaService>();
 
 var app = builder.Build();
