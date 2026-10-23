@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Permite rodar em máquinas que só têm um runtime mais novo que o 8. -->
     <RollForward>LatestMajor</RollForward>
+    <UserSecretsId>eule-api-nucciber</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

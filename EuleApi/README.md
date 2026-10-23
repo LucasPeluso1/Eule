@@ -26,6 +26,9 @@ Cache em memória de 24h por CNPJ (e do índice do ranking). Erros nunca são ca
 | Receita Federal | `https://publica.cnpj.ws/cnpj/{cnpj}` | Limite de ~3 req/min por IP (429 vira 503). |
 | BACEN cadastro | Olinda `BcBase/v2` `EntidadesSupervisionadas`, filtro `codigoCNPJ8` | O endpoint `/api/listaentidades/lista` **não existe** (404) e as páginas do bcb.gov.br são SPA Angular; por isso foi usada a API Olinda oficial. |
 | BACEN ranking | `www3.bcb.gov.br/rdrweb/rest/ext/ranking/` (lista JSON + `arquivo?...` CSV) | Pega o trimestre mais recente. O CSV só traz CNPJ em parte das linhas; conglomerados são casados por nome normalizado. |
+| CGU CEIS/CNEP | `portaldatransparencia.gov.br/api-de-dados/{ceis,cnep}?cnpjSancionado=` | Header `chave-api-dados` (`Fontes:CguChaveApi`, padrão `demo`). Falha vira null. |
+| PGFN | `listadevedores.pgfn.gov.br/api/listaDevedor?cnpj=` | Lê `totalDivida`. Falha vira null. |
+| DataJud (TJBA) | `api-publica.datajud.cnj.jus.br/api_publica_tjba/_search` | Chave fora do repositório: `dotnet user-secrets set "Fontes:DataJudApiKey" "<chave pública do CNJ>"` ou variável `Fontes__DataJudApiKey`. Sem chave ou com CPF mascarado, null. |
 
 ## Indicadores (v1.0.0)
 
