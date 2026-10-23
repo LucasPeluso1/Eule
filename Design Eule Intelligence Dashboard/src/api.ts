@@ -1,4 +1,4 @@
-import type { CompanyData, Risk, TipoAlerta, TipoIndicador } from "./fixtures";
+import type { CompanyData, Parecer, Risk, TipoAlerta, TipoIndicador } from "./fixtures";
 
 const API_URL = "http://localhost:5080";
 
@@ -36,6 +36,7 @@ interface EmpresaApi {
   scoreTotal: number;
   nivelRisco: "CRITICO" | "ALTO" | "MEDIO" | "BAIXO";
   tipoAlertaGeral: TipoAlerta;
+  parecer: Parecer;
 }
 
 const riscos: Record<EmpresaApi["nivelRisco"], Risk> = {
@@ -87,6 +88,7 @@ function mapear(e: EmpresaApi): CompanyData {
     scoreTotal: e.scoreTotal,
     classificacao: riscos[e.nivelRisco],
     tipoAlertaGeral: e.tipoAlertaGeral ?? "RISCO_MODERADO",
+    parecer: e.parecer,
   };
 }
 

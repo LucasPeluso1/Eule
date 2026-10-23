@@ -25,5 +25,5 @@ public class EmpresaController(IEmpresaService service) : ControllerBase
 public class HealthController : ControllerBase
 {
     [HttpGet]
-    public IActionResult Get() => Ok(new { status = "ok", versaoAlgoritmo = "1.0.0", horario = DateTime.UtcNow });
+    public IActionResult Get() => Ok(new { status = "ok", versaoAlgoritmo = "1.2.0", horario = DateTime.UtcNow });
 }

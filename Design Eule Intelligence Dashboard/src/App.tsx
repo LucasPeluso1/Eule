@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { fetchEmpresa } from "./api";
-import { CompanyData, Indicador, RecentSearch, Risk, TipoAlerta, TipoIndicador } from "./fixtures";
+import { CompanyData, Indicador, Parecer, RecentSearch, Risk, SituacaoFonte, TipoAlerta, TipoIndicador } from "./fixtures";
 import TileField from "./TileField";
 
 gsap.registerPlugin(useGSAP);
@@ -681,6 +681,116 @@ const recommendations = [
   "Verificar enquadramento na Resolução Conjunta nº 16/2025.",
 ];
 
+function MarcoNormativo() {
+  return (
+    <>
+      <p className="legal-ref">STF · Tema 1404 (RE 1.537.165)</p>
+      <p>A presente análise observa a tese de repercussão geral fixada pelo Supremo Tribunal Federal no Tema 1404 (RE 1.537.165), respeitando os limites de acesso, tratamento e compartilhamento de dados por órgãos de persecução.</p>
+      <p>Considera-se ainda a Resolução Conjunta nº 16/2025 do BCB/CMN, que proíbe a utilização de contas-bolsão, com prazo até 31/12/2026.</p>
+    </>
+  );
+}
+
+const situacaoFonteLabel: Record<SituacaoFonte, string> = {
+  CONSULTADA: "Consultada",
+  INDISPONIVEL: "Indisponível",
+  NAO_CONSULTAVEL: "Não consultável",
+};
+
+const prioridadeLabel = ["", "Prioritária", "Complementar", "Eventual"];
+
+function formatIso(iso: string) {
+  return new Date(iso).toLocaleString("pt-BR", { timeZone: "UTC", dateStyle: "short", timeStyle: "short" }) + " UTC";
+}
+
+function ParecerSections({ parecer }: { parecer: Parecer }) {
+  return (
+    <>
+      <section className="report-section legal-section">
+        <h3><span>3</span>Fundamentação</h3>
+        {parecer.fundamentacao.map((paragrafo) => <p key={paragrafo}>{paragrafo}</p>)}
+        <div className="marco-normativo"><MarcoNormativo /></div>
+      </section>
+
+      {parecer.enquadramentos.length > 0 && (
+        <section className="report-section">
+          <h3><span>4</span>Enquadramento típico (hipóteses)</h3>
+          <div className="enquadramentos">
+            {parecer.enquadramentos.map((e) => (
+              <article className="enquadramento" key={e.dispositivo}>
+                <header>
+                  <strong>{e.dispositivo}</strong>
+                  <span>{e.conduta}</span>
+                  <small>Competência: {e.competencia} · Indicadores {e.indicadores.join(", ")}</small>
+                </header>
+                <div className="elementos">
+                  <div>
+                    <h4>Já sustentado pelos achados</h4>
+                    <ul>{e.elementosSustentados.map((x) => <li key={x}>{x}</li>)}</ul>
+                  </div>
+                  <div>
+                    <h4>A provar por diligência</h4>
+                    <ul>{e.elementosAProvar.map((x) => <li key={x}>{x}</li>)}</ul>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="report-section recommendations">
+        <h3><span>{parecer.enquadramentos.length > 0 ? 5 : 4}</span>Diligências sugeridas</h3>
+        <ol>
+          {parecer.diligencias.map((d, index) => (
+            <li key={d.descricao}>
+              <span>{index + 1}</span>
+              <div>
+                <p className="diligencia-texto">
+                  <em className={`prioridade p${d.prioridade}`}>{prioridadeLabel[d.prioridade]}</em>
+                  {d.reservaJurisdicao && <em className="prioridade reserva">Reserva de jurisdição</em>}
+                  {d.descricao}
+                </p>
+                <p className="diligencia-motivo">{d.motivo}{d.baseLegal && <> · <strong>{d.baseLegal}</strong></>}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="report-section">
+        <h3><span>{parecer.enquadramentos.length > 0 ? 6 : 5}</span>Fontes e proveniência</h3>
+        <div className="table-scroll">
+          <table className="report-table fontes-table">
+            <thead><tr><th>Fonte</th><th>Situação</th><th>Consulta</th><th>Referência</th><th>Indicadores</th><th>Verificar</th></tr></thead>
+            <tbody>
+              {parecer.fontes.map((f) => (
+                <tr key={f.nome}>
+                  <td className="indicator-name-cell">
+                    {f.nome}
+                    {f.urlConsulta && <code className="url-consulta">{f.urlConsulta}</code>}
+                  </td>
+                  <td className={`fonte-${f.situacao.toLowerCase()}`}>{situacaoFonteLabel[f.situacao]}</td>
+                  <td className="num">{formatIso(f.consultadoEm)}</td>
+                  <td>{f.referencia ?? "—"}</td>
+                  <td>{f.indicadores.join(", ")}</td>
+                  <td>{f.urlVerificacao ? <a href={f.urlVerificacao} target="_blank" rel="noreferrer">Abrir</a> : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {parecer.ressalvas.length > 0 && (
+          <>
+            <h4 className="ressalvas-title">Ressalvas</h4>
+            <ul className="ressalvas">{parecer.ressalvas.map((r) => <li key={r}>{r}</li>)}</ul>
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+
 function ReportScreen({ company, consultedAt }: { company: CompanyData; consultedAt: Date }) {
   const reference = `EULE-${consultedAt.getFullYear()}-${dossierNumber(company)}`;
   const root = useRef<HTMLElement>(null);
@@ -698,7 +808,7 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           <span className="toolbar-state"><i /> Documento concluído</span>
         </div>
         <div className="toolbar-actions">
-          <button className="secondary-button" type="button">
+          <button className="secondary-button" type="button" onClick={() => window.print()}>
             <Icon><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></Icon>
             Exportar PDF
           </button>
@@ -773,28 +883,32 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           </div>
         </section>
 
-        <div className="report-columns">
-          <section className="report-section legal-section">
-            <h3><span>3</span>Fundamentação jurídica</h3>
-            <p className="legal-ref">STF · Tema 1404 (RE 1.537.165)</p>
-            <p>A presente análise observa a tese de repercussão geral fixada pelo Supremo Tribunal Federal no Tema 1404 (RE 1.537.165), respeitando os limites de acesso, tratamento e compartilhamento de dados por órgãos de persecução.</p>
-            <p>Considera-se ainda a Resolução Conjunta nº 16/2025 do BCB/CMN, que proíbe a utilização de contas-bolsão, com prazo até 31/12/2026.</p>
-            <blockquote>O uso de informações deve preservar a finalidade pública, a rastreabilidade da consulta e a proporcionalidade da medida investigativa.</blockquote>
-          </section>
+        {company.parecer ? (
+          <ParecerSections parecer={company.parecer} />
+        ) : (
+          <div className="report-columns">
+            <section className="report-section legal-section">
+              <h3><span>3</span>Fundamentação jurídica</h3>
+              <MarcoNormativo />
+            </section>
 
-          <section className="report-section recommendations">
-            <h3><span>4</span>Recomendações</h3>
-            <ol>
-              {recommendations.map((item, index) => (
-                <li key={item}><span>{index + 1}</span>{item}</li>
-              ))}
-            </ol>
-          </section>
-        </div>
+            <section className="report-section recommendations">
+              <h3><span>4</span>Recomendações</h3>
+              <ol>
+                {recommendations.map((item, index) => (
+                  <li key={item}><span>{index + 1}</span>{item}</li>
+                ))}
+              </ol>
+            </section>
+          </div>
+        )}
 
         <footer className="report-footer">
           <p>Este documento é produto de inteligência e não constitui, isoladamente, prova de ilícito. As informações devem ser corroboradas por diligências próprias antes de qualquer medida administrativa ou judicial.</p>
-          <span>EULE · {reference} · Página 1/1</span>
+          <span>
+            EULE · {reference}
+            {company.parecer && <> · SHA-256 <code className="hash">{company.parecer.hashIntegridade}</code></>}
+          </span>
         </footer>
       </article>
     </main>
