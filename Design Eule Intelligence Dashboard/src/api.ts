@@ -1,4 +1,4 @@
-import type { CompanyData, Risk } from "./fixtures";
+import type { CompanyData, Risk, TipoAlerta, TipoIndicador } from "./fixtures";
 
 const API_URL = "http://localhost:5080";
 
@@ -17,18 +17,29 @@ interface EmpresaApi {
   socios: Array<{ nome: string; qualificacao: string }>;
   autorizadoBacen: boolean;
   constaNoRanking: boolean;
+  sancaoAtivaCeis: boolean | null;
+  sancaoAtivaCnep: boolean | null;
+  descricaoSancao: string | null;
+  possuiDividaAtivaPgfn: boolean | null;
+  valorDividaPgfn: number | null;
+  socioComProcessoCriminal: boolean | null;
+  nomeSocioProcessado: string | null;
+  numeroProcessosEncontrados: number | null;
   indicadores: Array<{
     codigo: string;
     descricao: string;
     pesoMaximo: number;
     scoreObtido: number;
     fundamentacao: string;
+    tipo: TipoIndicador;
   }>;
   scoreTotal: number;
-  nivelRisco: "ALTO" | "MEDIO" | "BAIXO";
+  nivelRisco: "CRITICO" | "ALTO" | "MEDIO" | "BAIXO";
+  tipoAlertaGeral: TipoAlerta;
 }
 
 const riscos: Record<EmpresaApi["nivelRisco"], Risk> = {
+  CRITICO: "CRÍTICO",
   ALTO: "ALTO",
   MEDIO: "MÉDIO",
   BAIXO: "BAIXO",
@@ -61,9 +72,21 @@ function mapear(e: EmpresaApi): CompanyData {
       peso: i.pesoMaximo,
       score: i.scoreObtido,
       observado: i.fundamentacao,
+      tipo: i.tipo ?? "FATOR_RISCO",
     })),
+    fontes: {
+      sancaoCeis: e.sancaoAtivaCeis ?? null,
+      sancaoCnep: e.sancaoAtivaCnep ?? null,
+      descricaoSancao: e.descricaoSancao ?? null,
+      dividaAtivaPgfn: e.possuiDividaAtivaPgfn ?? null,
+      valorDividaPgfn: e.valorDividaPgfn == null ? null : formatarMoeda(e.valorDividaPgfn),
+      socioProcessoCriminal: e.socioComProcessoCriminal ?? null,
+      nomeSocioProcessado: e.nomeSocioProcessado ?? null,
+      numeroProcessos: e.numeroProcessosEncontrados ?? null,
+    },
     scoreTotal: e.scoreTotal,
     classificacao: riscos[e.nivelRisco],
+    tipoAlertaGeral: e.tipoAlertaGeral ?? "RISCO_MODERADO",
   };
 }
 

@@ -3,13 +3,14 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import { fetchEmpresa } from "./api";
-import { CompanyData, Indicador, RecentSearch, Risk } from "./fixtures";
+import { CompanyData, Indicador, RecentSearch, Risk, TipoAlerta, TipoIndicador } from "./fixtures";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
 type Screen = "search" | "analysis" | "report";
 
 const riskNotes: Record<Risk, string> = {
+  CRÍTICO: "Risco crítico. Os sinais reunidos justificam prioridade na análise e avaliação imediata de medidas.",
   ALTO: "Risco elevado. Recomenda-se análise aprofundada antes do prosseguimento.",
   MÉDIO: "Risco moderado. Recomenda-se acompanhamento e verificação complementar.",
   BAIXO: "Risco baixo. Nenhuma providência adicional recomendada neste momento.",
@@ -22,6 +23,8 @@ const prefersReducedMotion = () =>
   typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function indicatorLevel(indicador: Indicador) {
+  // A API marca com "NÃO AVALIADO" os indicadores cuja fonte complementar não respondeu.
+  if (indicador.score === 0 && indicador.observado.startsWith("NÃO AVALIADO")) return "na";
   const ratio = indicador.score / indicador.peso;
   if (ratio >= 0.66) return "high";
   if (ratio >= 0.33) return "medium";
@@ -29,7 +32,69 @@ function indicatorLevel(indicador: Indicador) {
 }
 
 function riskClass(risk: Risk) {
-  return risk.toLowerCase().replace("é", "e");
+  return risk.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+const tipoLabels: Record<TipoIndicador, string> = {
+  INDICIO_JURIDICO: "Indício jurídico",
+  FATOR_RISCO: "Fator de risco",
+};
+
+function TipoTag({ tipo }: { tipo: TipoIndicador }) {
+  return <span className={tipo === "INDICIO_JURIDICO" ? "tag juridico" : "tag risco"}>{tipoLabels[tipo]}</span>;
+}
+
+/** Alertas que exigem indício jurídico positivo e por isso ganham o banner de justa causa. */
+const alertCopy: Partial<Record<TipoAlerta, { kicker: string; title: string; text: string }>> = {
+  FUNDAMENTO_PIC: {
+    kicker: "Justa causa identificada",
+    title: "Fundamento para instauração de PIC",
+    text: "Score de risco a partir de 90 com indício jurídico positivo. Os elementos reunidos indicam justa causa para instauração de PIC ou requisição de IP, nos termos do Tema 1404 do STF.",
+  },
+  SUSPEITA_QUALIFICADA: {
+    kicker: "Suspeita qualificada",
+    title: "Indício jurídico com score elevado",
+    text: "Score de risco a partir de 80 com indício jurídico positivo. Recomenda-se diligência complementar para consolidar a justa causa antes da instauração de PIC.",
+  },
+};
+
+function JustaCausaBanner({ company }: { company: CompanyData }) {
+  const copy = alertCopy[company.tipoAlertaGeral];
+  if (!copy) return null;
+  const indicios = company.indicadores.filter((i) => i.tipo === "INDICIO_JURIDICO" && i.score > 0);
+  const qualificada = company.tipoAlertaGeral === "SUSPEITA_QUALIFICADA";
+
+  return (
+    <section className={qualificada ? "alert-banner qualificada" : "alert-banner"} role="alert" aria-live="assertive">
+      <div className="alert-icon" aria-hidden="true">
+        <Icon>
+          <path d="M12 3 2.5 20h19L12 3Z" />
+          <path d="M12 10v4.5M12 17.5v.01" />
+        </Icon>
+      </div>
+      <div>
+        <span className="alert-kicker">{copy.kicker}</span>
+        <h2>{copy.title}</h2>
+        <p>{copy.text}</p>
+        {indicios.length > 0 && (
+          <ul className="alert-indicios">
+            {indicios.map((i) => (
+              <li key={i.id}><TipoTag tipo={i.tipo} /> {i.id} · {i.label}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="alert-score">
+        <strong>{company.scoreTotal}</strong>
+        <span>score de risco</span>
+      </div>
+    </section>
+  );
+}
+
+function situacaoFonte(valor: boolean | null, positivo: string, negativo: string) {
+  if (valor === null) return "Não avaliado (fonte indisponível)";
+  return valor ? positivo : negativo;
 }
 
 function companyInitials(name: string) {
@@ -283,8 +348,8 @@ function SearchScreen({
             <dd>{recentSearches.length}</dd>
           </div>
           <div className="alert-stat">
-            <dt>Alertas de risco ALTO</dt>
-            <dd>{recentSearches.filter((item) => item.company.classificacao === "ALTO").length}</dd>
+            <dt>Alertas de risco alto ou crítico</dt>
+            <dd>{recentSearches.filter((item) => item.company.classificacao === "ALTO" || item.company.classificacao === "CRÍTICO").length}</dd>
           </div>
           <div>
             <dt>Última consulta</dt>
@@ -403,6 +468,7 @@ const levelLabels: Record<ReturnType<typeof indicatorLevel>, string> = {
   high: "Sinal forte",
   medium: "Sinal moderado",
   low: "Sem sinal relevante",
+  na: "Não avaliado",
 };
 
 function IndicatorCard({ indicador }: { indicador: Indicador }) {
@@ -422,6 +488,7 @@ function IndicatorCard({ indicador }: { indicador: Indicador }) {
         </div>
         <p className="indicator-description"><ObservadoCell texto={indicador.observado} /></p>
         <div className="indicator-foot">
+          <TipoTag tipo={indicador.tipo} />
           <span className={`level-label ${level}`}>{levelLabels[level]}</span>
         </div>
       </div>
@@ -451,6 +518,21 @@ function AnalysisScreen({
     ["Sede", `${company.municipio}/${company.uf}`],
     ["Cadastro BACEN", company.apareceBacen ? "Consta" : "Não consta"],
     ["Ranking de Reclamações", company.aparecRanking ? "Consta" : "Não consta"],
+    ["Sanções CEIS/CNEP (CGU)", situacaoFonte(
+      company.fontes.sancaoCeis === null && company.fontes.sancaoCnep === null ? null : company.fontes.sancaoCeis === true || company.fontes.sancaoCnep === true,
+      company.fontes.descricaoSancao ?? "Sanção ativa",
+      "Sem sanção registrada",
+    )],
+    ["Dívida ativa da União (PGFN)", situacaoFonte(
+      company.fontes.dividaAtivaPgfn,
+      `Inscrita · ${company.fontes.valorDividaPgfn ?? "valor não informado"}`,
+      "Sem dívida ativa",
+    )],
+    ["Processo criminal de sócio (DataJud)", company.fontes.socioProcessoCriminal === null
+      ? "Não avaliado (CPF mascarado ou fonte indisponível)"
+      : company.fontes.socioProcessoCriminal
+        ? `${company.fontes.nomeSocioProcessado} · ${company.fontes.numeroProcessos} processo(s)`
+        : "Nenhum processo criminal encontrado"],
   ];
 
   useGSAP(() => {
@@ -458,6 +540,7 @@ function AnalysisScreen({
     const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
     tl.from(".zone-score", { autoAlpha: 0, y: 12, duration: 0.45 })
       .from(".zone-report", { height: 0, autoAlpha: 0, duration: 0.6, clearProps: "height" }, "-=0.15")
+      .from(".zone-report .alert-banner", { autoAlpha: 0, scale: 0.94, duration: 0.55, ease: "power3.out" }, "-=0.25")
       .from(".indicator-card", { autoAlpha: 0, y: 14, duration: 0.4, stagger: 0.06 }, "-=0.3")
       .from(".report-extra", { autoAlpha: 0, y: 10, duration: 0.4, stagger: 0.06 }, "-=0.2");
   }, { scope: root, dependencies: [company], revertOnUpdate: true });
@@ -488,6 +571,8 @@ function AnalysisScreen({
 
       <section className="zone zone-report" aria-labelledby="report-heading">
         <div className="report-inner">
+          <JustaCausaBanner company={company} />
+
           <div className="report-heading">
             <div>
               <span className="eyebrow">Relatório de indicadores</span>
@@ -529,7 +614,7 @@ function AnalysisScreen({
 
           <div className="report-extra source-bar">
             <Icon><path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10Z" /><path d="m9 12 2 2 4-5" /></Icon>
-            <span><strong>Fontes consultadas:</strong> Receita Federal (cadastro de CNPJ), Cadastro de instituições autorizadas do BACEN e Ranking de Reclamações do BACEN.</span>
+            <span><strong>Fontes consultadas:</strong> Receita Federal (cadastro de CNPJ), Cadastro de instituições autorizadas e Ranking de Reclamações do BACEN, CEIS/CNEP (CGU), lista de devedores da PGFN e DataJud (CNJ).</span>
             <span className="source-time">Consultado em {formatTimestamp(consultedAt)}</span>
           </div>
         </div>
@@ -602,6 +687,10 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           <p>CNPJ {company.cnpj} · {company.municipio}/{company.uf} · Abertura em {company.dataAbertura}</p>
         </div>
 
+        <div className="report-alert">
+          <JustaCausaBanner company={company} />
+        </div>
+
         <section className={`executive-summary ${riskClass(company.classificacao)}`}>
           <div>
             <span className="report-label">01 · Sumário executivo</span>
@@ -627,11 +716,12 @@ function ReportScreen({ company, consultedAt }: { company: CompanyData; consulte
           <span className="report-label">02 · Matriz de indicadores</span>
           <div className="table-scroll">
             <table className="report-table">
-              <thead><tr><th>Indicador analisado</th><th>Peso máx.</th><th>Score</th><th>Valor observado</th></tr></thead>
+              <thead><tr><th>Indicador analisado</th><th>Tipo</th><th>Peso máx.</th><th>Score</th><th>Valor observado</th></tr></thead>
               <tbody>
                 {company.indicadores.map((indicador) => (
                   <tr key={indicador.id}>
                     <td className="indicator-name-cell">{indicador.id} · {indicador.label}</td>
+                    <td><TipoTag tipo={indicador.tipo} /></td>
                     <td>{indicador.peso}</td>
                     <td className={`score-cell ${indicatorLevel(indicador)}`}>{indicador.score}</td>
                     <td><ObservadoCell texto={indicador.observado} /></td>
